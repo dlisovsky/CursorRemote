@@ -249,6 +249,7 @@
     "record": "mkdir -p data && tsx scripts/record-cdp.ts",
     "replay": "tsx scripts/replay-cdp.ts",
     "test": "npx tsx --test tests/*.test.ts",
+    "prefetch:whisper": "python3 scripts/prefetch-whisper-model.py --model small",
     "probe": "tsx scripts/probe-cdp.ts",
     "wait-record": "tsx scripts/wait-record.ts"
   },

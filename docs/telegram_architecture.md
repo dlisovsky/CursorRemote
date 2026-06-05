@@ -40,8 +40,12 @@
 ```
 src/server/transports/telegram/
 ├── index.ts            # TelegramTransport class - lifecycle, event wiring
+├── base.ts             # Shared transport: window sync, live feed, activity, approvals
 ├── formatter.ts        # ChatElement → Telegram HTML conversion
+├── live-feed-sync.ts   # Compact live feed send/edit/delete decisions
 ├── commands.ts         # Bot command handlers + callback query handlers
+├── voice-download.ts   # Download voice OGG from Telegram
+├── voice-transcribe.ts # Spawn faster-whisper script
 ├── topic-manager.ts    # Topic ↔ window+tab bidirectional mapping
 └── message-tracker.ts  # ChatElement.id → Telegram message_id tracking
 ```
@@ -74,7 +78,7 @@ TelegramTransport.onStatePatch(patch)
   └─ patch.chatTabs? / patch.windows? → (no automatic push, shown on /topics /status)
 ```
 
-**Window snapshots**: In production, `WindowMonitor` fires `window:update` → `TelegramTransport.processWindow` → `doProcessWindow` for each connected window. That path sends **ephemeral activity** (with thought dedup), **composer queue** summary, and **content messages** using the same `formatter` + `MessageTracker` as above — not only `state:patch`.
+**Window snapshots**: In production, `WindowMonitor` fires `window:update` → `TelegramTransport.processWindow` → `doProcessWindow` for each connected window. That path sends **status UI** (compact live feed or legacy activity), **composer queue** summary, and **content messages** using the same `formatter` + `MessageTracker` as above — not only `state:patch`.
 
 ### 3.2 Inbound: Telegram → Cursor
 
@@ -133,12 +137,25 @@ The main class that implements the `Transport` interface.
 - `SendQueue` class (configured in `TelegramTransport`): serializes outbound `sendMessage` / `editMessageText` with **~300ms** between sends and **100ms** between edits (see `send-queue.ts` defaults vs. transport override)
 - `seenThreads` set: on first encounter with a thread, only last 5 messages are sent (older ones marked as "skipped" in tracker)
 
-**Activity messages** (ephemeral status line):
+**Compact live feed** (`TELEGRAM_COMPACT_LIVE`, default on):
+
+- When the agent is busy or recent messages include ephemeral rows (`isEphemeralElement`: loading tools, in-progress thoughts), `syncLiveFeedMessage` builds HTML via `formatLiveFeed` (activity line + up to 12 ephemeral elements) and **edits one Telegram message** per topic.
+- Ephemeral elements are **skipped** in the per-element send loop (`shouldSkipMessageForCompactLive`) so tools/thoughts do not also appear as separate messages.
+- Content-hash dedup (`planLiveFeedUpdate` in `live-feed-sync.ts`) skips redundant `editMessageText` calls.
+- Live feed message IDs persist to `data/telegram-live-feed.json`; on bot connect, `cleanupPersistedLiveFeed()` deletes orphaned bubbles from a prior process.
+- `cleanStaleStatusMessages()` removes stuck live feed (and legacy activity) rows after `AGENT_ACTIVITY_STALE_MS` (30s, `src/server/activity-stale.ts`).
+
+**Legacy activity messages** (`TELEGRAM_COMPACT_LIVE=false`):
 
 - On each window snapshot, `doProcessWindow` compares `snapshot.agentActivityText` to tracked state per `threadId`, but only when `snapshot.agentActivityLive` is true.
 - If activity is **redundant** with a matching in-progress `step_summary` thought in recent messages, any existing activity Telegram message is **deleted** and no new one is sent (`activityRedundantWithInProgressStepSummary` in `formatter.ts`).
-- Otherwise: send → edit on label change → delete when live activity clears; `cleanStaleActivity()` removes stuck rows after `AGENT_ACTIVITY_STALE_MS` (`src/server/activity-stale.ts`, 30s). The same timeout clears the web header via `StateManager`.
+- Otherwise: send → edit on label change → delete when live activity clears.
 - Persists activity `message_id` map to `data/telegram-activity.json` so restarts can clean orphaned messages.
+
+**Voice notes** (inbound):
+
+- `handleVoiceMessage` downloads OGG via Bot API → `transcribeVoiceFile` spawns `scripts/transcribe-voice.py` (faster-whisper) with `--languages` from `TRANSCRIBE_LANGUAGES` → edits a status message → `sendPromptToMappedAgent`.
+- Script resolution prefers `TRANSCRIBE_SCRIPT`, then `scripts/transcribe-voice.py`, then bundled `dist/transcribe/`. Prefetch model: `npm run prefetch:whisper`.
 
 **State subscription**:
 - `stateManager.on('state:patch', this.onStatePatch)`
@@ -157,8 +174,11 @@ Pure functions that convert `ChatElement` objects to Telegram HTML strings and o
 - `formatElement(element: ChatElement): { html: string; keyboard?: InlineKeyboard }` — dispatch by element type
 - `formatAssistant(msg: AssistantMessage): string` — convert Cursor HTML to Telegram HTML, passes `msg.codeBlocks` for accurate code rendering
 - `formatActivity(text: string): string` — ephemeral activity line (`● label…`), no spoiler tag
+- `formatLiveFeed(activityText, ephemeralElements, allMessages, hashCallback)` — single editable status bubble for compact mode
+- `isEphemeralElement(element)` — loading tools and in-progress thoughts
 - `thoughtAppearsInProgress(msg: ThoughtBlock): boolean` — exported; used for activity dedup and thought formatting
 - `activityRedundantWithInProgressStepSummary(activityText, elements): boolean` — suppresses duplicate activity vs. `📎` step-summary thoughts
+- `planLiveFeedUpdate` / `shouldSkipMessageForCompactLive` (`live-feed-sync.ts`) — pure send/edit/delete/skip decisions
 - `formatPlan(plan: PlanBlock): { html: string; keyboard: InlineKeyboard }` — full plan card with todo list
 - `formatRunCommand(cmd: RunCommand): { html: string; keyboard: InlineKeyboard }` — command card with buttons
 - `formatApprovals(approvals: Approval[]): { html: string; keyboard: InlineKeyboard }` — approval message with buttons

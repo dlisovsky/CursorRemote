@@ -246,6 +246,12 @@ The easiest way to set up Telegram is via the **Setup Panel** — run **CursorRe
 
 Plain text in any topic is sent as a prompt to the mapped Cursor agent.
 
+### Compact live feed & voice notes
+
+When `TELEGRAM_COMPACT_LIVE` is enabled (default), in-flight tools and thoughts update **one editable message** per topic instead of spamming separate messages. Set `TELEGRAM_COMPACT_LIVE=false` to restore the legacy per-activity message behavior.
+
+**Voice notes** are transcribed locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and sent as Cursor prompts. Restrict languages with `TRANSCRIBE_LANGUAGES` (default `en,ru`). The first transcription downloads the model (~500MB); run `npm run prefetch:whisper` once to avoid timeouts on the first voice message.
+
 ## Scripts
 
 | Command | Description |
@@ -258,6 +264,7 @@ Plain text in any topic is sent as a prompt to the mapped Cursor agent.
 | `npm run release -- patch\|minor\|major` | Bump version, update changelog, create git tag |
 | `npm start` | Run compiled server |
 | `npm run discover` | DOM discovery tool |
+| `npm run prefetch:whisper` | Pre-download faster-whisper model for Telegram voice |
 
 ## Documentation
 

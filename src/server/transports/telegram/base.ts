@@ -22,6 +22,7 @@ import {
   isEphemeralElement,
   type FormattedMessage,
 } from './formatter.js';
+import { planLiveFeedUpdate, shouldSkipMessageForCompactLive } from './live-feed-sync.js';
 import { AGENT_ACTIVITY_STALE_MS } from '../../activity-stale.js';
 import type { TelegramApiClient, BotContext } from './tg-types.js';
 import type { CommandDeps, RegisterDeps } from './commands.js';
@@ -52,6 +53,7 @@ const dataDir = process.env.DATA_DIR ?? './data';
 const SYNC_STATE_PATH = `${dataDir}/telegram-sync.json`;
 const AUTH_PATH = `${dataDir}/telegram-auth.json`;
 const ACTIVITY_PATH = `${dataDir}/telegram-activity.json`;
+const LIVE_FEED_PATH = `${dataDir}/telegram-live-feed.json`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -134,6 +136,7 @@ export abstract class BaseTelegramTransport implements Transport {
   private activityTimestamps = new Map<number, number>();
   private liveFeedMsgIds = new Map<number, number>();
   private lastLiveFeedHash = new Map<number, string>();
+  private liveFeedTimestamps = new Map<number, number>();
   private queueMsgIds = new Map<number, number>();
   private lastQueueSig = new Map<number, string>();
   protected authState: AuthState;
@@ -277,13 +280,14 @@ export abstract class BaseTelegramTransport implements Transport {
   }
 
   protected setupStaleTimer(): void {
-    this.activityStaleTimer = setInterval(() => this.cleanStaleActivity(), 15000);
+    this.activityStaleTimer = setInterval(() => this.cleanStaleStatusMessages(), 15000);
   }
 
   protected onBotConnected(): void {
     console.log(`[telegram] Bot connected (sync: ${this.syncEnabled ? 'on' : 'off'})`);
     this.started = true;
     this.cleanupPersistedActivity();
+    this.cleanupPersistedLiveFeed();
   }
 
   protected onStop(): void {
@@ -421,6 +425,8 @@ export abstract class BaseTelegramTransport implements Transport {
     this.api.deleteMessage(this.chatId, msgId).catch(() => {});
     this.liveFeedMsgIds.delete(threadId);
     this.lastLiveFeedHash.delete(threadId);
+    this.liveFeedTimestamps.delete(threadId);
+    this.saveLiveFeedState();
   }
 
   private deleteAllLiveFeedMessages(): void {
@@ -453,12 +459,18 @@ export abstract class BaseTelegramTransport implements Transport {
     }
   }
 
-  private cleanStaleActivity(): void {
+  private cleanStaleStatusMessages(): void {
     const now = Date.now();
     for (const [threadId, ts] of this.activityTimestamps) {
       if (now - ts > AGENT_ACTIVITY_STALE_MS && this.activityMsgIds.has(threadId)) {
         console.log(`[telegram] Activity stale (${((now - ts) / 1000).toFixed(0)}s), cleaning up`);
         this.deleteActivityMessage(threadId);
+      }
+    }
+    for (const [threadId, ts] of this.liveFeedTimestamps) {
+      if (now - ts > AGENT_ACTIVITY_STALE_MS && this.liveFeedMsgIds.has(threadId)) {
+        console.log(`[telegram] Live feed stale (${((now - ts) / 1000).toFixed(0)}s), cleaning up`);
+        this.deleteLiveFeedMessage(threadId);
       }
     }
   }
@@ -484,6 +496,30 @@ export abstract class BaseTelegramTransport implements Transport {
         }
       }
       writeFileSync(ACTIVITY_PATH, '{}');
+    } catch { /* ok on first run */ }
+  }
+
+  private saveLiveFeedState(): void {
+    try {
+      const data: Record<string, number> = {};
+      for (const [threadId, msgId] of this.liveFeedMsgIds) data[String(threadId)] = msgId;
+      writeFileSync(LIVE_FEED_PATH, JSON.stringify(data));
+    } catch { /* best effort */ }
+  }
+
+  private cleanupPersistedLiveFeed(): void {
+    try {
+      if (!existsSync(LIVE_FEED_PATH)) return;
+      const raw = JSON.parse(readFileSync(LIVE_FEED_PATH, 'utf-8')) as Record<string, number>;
+      const entries = Object.entries(raw);
+      if (entries.length === 0) return;
+      console.log(`[telegram] Cleaning ${entries.length} persisted live feed message(s)`);
+      for (const [, msgId] of entries) {
+        if (this.chatId) {
+          this.api.deleteMessage(this.chatId, msgId).catch(() => {});
+        }
+      }
+      writeFileSync(LIVE_FEED_PATH, '{}');
     } catch { /* ok on first run */ }
   }
 
@@ -572,16 +608,21 @@ export abstract class BaseTelegramTransport implements Transport {
     const html = formatLiveFeed(activityText, ephemeralElements, allMessages, hashCallback);
     const contentHash = MessageTracker.contentHash(html || '(empty)');
     const existingId = this.liveFeedMsgIds.get(threadId);
+    const action = planLiveFeedUpdate(
+      html,
+      existingId,
+      this.lastLiveFeedHash.get(threadId),
+      contentHash
+    );
 
-    if (!html) {
-      if (existingId) this.deleteLiveFeedMessage(threadId);
+    if (action === 'none') return;
+    if (action === 'delete') {
+      this.deleteLiveFeedMessage(threadId);
       return;
     }
 
-    if (this.lastLiveFeedHash.get(threadId) === contentHash && existingId) return;
-
     try {
-      if (existingId) {
+      if (action === 'edit' && existingId) {
         await this.sendQueue.enqueue(
           () => this.api.editMessageText(this.chatId!, existingId, html, { parse_mode: 'HTML' }),
           'edit'
@@ -596,12 +637,17 @@ export abstract class BaseTelegramTransport implements Transport {
         );
         this.liveFeedMsgIds.set(threadId, sent.message_id);
       }
+      const now = Date.now();
       this.lastLiveFeedHash.set(threadId, contentHash);
+      this.liveFeedTimestamps.set(threadId, now);
+      this.saveLiveFeedState();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('message to edit not found')) {
         this.liveFeedMsgIds.delete(threadId);
         this.lastLiveFeedHash.delete(threadId);
+        this.liveFeedTimestamps.delete(threadId);
+        this.saveLiveFeedState();
       } else if (!msg.includes('message is not modified')) {
         console.warn(`[telegram] Live feed update failed: ${msg}`);
       }
@@ -867,7 +913,7 @@ export abstract class BaseTelegramTransport implements Transport {
 
     for (const element of tail) {
       if (element.type === 'loading') continue;
-      if (useCompactLive && isEphemeralElement(element)) continue;
+      if (shouldSkipMessageForCompactLive(useCompactLive, element)) continue;
 
       const formatted = formatElement(element, hashCallback);
       if (!formatted.html) continue;
