@@ -64,3 +64,36 @@ Key architectural patterns:
 - **Message extraction** uses Cursor's `data-*` attributes (`data-flat-index`, `data-message-role`, etc.).
 - **Extension ↔ Server boundary**: the extension spawns the server as a child process. License validation is intentionally duplicated between `extension/src/license-manager.ts` and `src/server/license.ts`.
 - **Two repos**: this dev repo (`~/Dev/cursor-ide-remote/`) and public repo (`~/Dev/CursorRemote/`). Publishing uses `npm run publish:public`.
+
+## gstack
+
+This project uses [gstack](https://github.com/garrytan/gstack) via the global Cursor install at `~/.cursor/skills/gstack` (source: `~/gstack`). Use gstack skills for structured review, QA, and ship workflows instead of ad-hoc prompts.
+
+If gstack is missing on a machine:
+
+```bash
+git clone --depth 1 https://github.com/garrytan/gstack.git ~/gstack
+cd ~/gstack && ./setup --host cursor
+```
+
+Use `~/.cursor/skills/gstack/` paths in skills (not `~/.claude/skills/gstack/`). For web browsing in gstack flows, use `/browse` — not browser MCP tools.
+
+## Skill routing
+
+When the user's request matches an available gstack skill, read that skill's `SKILL.md` under `~/.cursor/skills/` and follow it. When in doubt, invoke the skill.
+
+Key routing rules:
+
+- Product ideas / brainstorming → `/office-hours`
+- Strategy / scope → `/plan-ceo-review`
+- Architecture / execution plan → `/plan-eng-review`
+- Design system / plan review → `/design-consultation` or `/plan-design-review`
+- Full automated review pipeline → `/autoplan`
+- Bugs / errors / regressions → `/investigate`
+- QA / test the web client or relay → `/qa` or `/qa-only`
+- Code review / diff check before merge → `/review`
+- Security audit → `/cso`
+- Visual polish → `/design-review`
+- Ship / deploy / PR → `/ship` or `/land-and-deploy`
+- Save / resume session context → `/context-save` / `/context-restore`
+- Author a backlog-ready spec → `/spec`

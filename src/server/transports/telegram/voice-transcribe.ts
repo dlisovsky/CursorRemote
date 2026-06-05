@@ -26,10 +26,10 @@ export function resolveTranscribeScript(config: TranscribeConfig): string | null
 
   const bundleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    resolve(process.cwd(), 'scripts/transcribe-voice.py'),
     resolve(bundleDir, '../../../transcribe/transcribe-voice.py'),
     resolve(bundleDir, '../../../../transcribe/transcribe-voice.py'),
     resolve(process.cwd(), 'dist/transcribe/transcribe-voice.py'),
-    resolve(process.cwd(), 'scripts/transcribe-voice.py'),
   ];
 
   for (const path of candidates) {
@@ -49,10 +49,20 @@ export async function transcribeVoiceFile(
   }
 
   const timeoutMs = config.timeoutMs || DEFAULT_TRANSCRIBE_TIMEOUT_MS;
-  console.log(`[telegram-voice] Transcribing ${audioPath} model=${config.model} python=${config.pythonPath} timeout_ms=${timeoutMs}`);
+  const langs = config.languages.join(',');
+  console.log(
+    `[telegram-voice] Transcribing ${audioPath} model=${config.model} languages=${langs} python=${config.pythonPath} timeout_ms=${timeoutMs}`
+  );
 
   return new Promise((resolve, reject) => {
-    const child = spawn(config.pythonPath, [scriptPath, audioPath, '--model', config.model], {
+    const child = spawn(config.pythonPath, [
+      scriptPath,
+      audioPath,
+      '--model',
+      config.model,
+      '--languages',
+      langs,
+    ], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

@@ -1,4 +1,15 @@
 import esbuild from 'esbuild';
+import { copyFileSync, mkdirSync } from 'fs';
+import { resolve } from 'path';
+
+function copyTranscribeScript() {
+  const src = resolve('scripts/transcribe-voice.py');
+  const destDir = resolve('extension/dist/transcribe');
+  mkdirSync(destDir, { recursive: true });
+  copyFileSync(src, resolve(destDir, 'transcribe-voice.py'));
+  mkdirSync(resolve('dist/transcribe'), { recursive: true });
+  copyFileSync(src, resolve('dist/transcribe/transcribe-voice.py'));
+}
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -44,6 +55,7 @@ async function main() {
     await Promise.all([extCtx.rebuild(), serverCtx.rebuild()]);
     await Promise.all([extCtx.dispose(), serverCtx.dispose()]);
   }
+  copyTranscribeScript();
 }
 
 main().catch((e) => {

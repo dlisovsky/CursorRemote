@@ -338,6 +338,8 @@ export interface TranscribeConfig {
   pythonPath: string;
   model: string;
   scriptPath?: string;
+  /** ISO 639-1 codes; Whisper picks the best match among these only (default en, ru). */
+  languages: string[];
   /** Max wait for transcription (includes first-time model download). */
   timeoutMs: number;
 }
@@ -363,4 +365,6 @@ export interface TelegramConfig {
   preRegisteredUsers: number[];
   impl: 'grammy' | 'raw';
   voiceEnabled: boolean;
+  /** Collapse in-flight tools/thoughts into one editable Telegram message per topic. */
+  compactLive: boolean;
 }

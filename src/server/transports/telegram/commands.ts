@@ -1333,8 +1333,14 @@ export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Pr
     return;
   }
 
+  const chatId = ctx.chat?.id;
+  if (!chatId) {
+    console.error('[telegram-voice] Missing chat id on voice update');
+    return;
+  }
+
   console.log(`[telegram-voice] Received voice note duration=${voice.duration}s thread=${threadId}`);
-  await ctx.reply('Transcribing voice message...');
+  const statusMsg = await ctx.reply('⏳ Transcribing voice…', { message_thread_id: threadId });
 
   let audioPath: string | undefined;
   try {
@@ -1342,13 +1348,34 @@ export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Pr
     const result = await transcribeVoiceFile(audioPath, deps.transcribe);
 
     const preview = result.text.length > 500 ? `${result.text.slice(0, 500)}…` : result.text;
-    await ctx.reply(`Transcribed (${result.language}): ${preview}`);
+    await deps.api.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      `📝 <b>Transcribed</b> (${escapeHtml(result.language)}):\n${escapeHtml(preview)}`,
+      { message_thread_id: threadId, parse_mode: 'HTML' }
+    );
 
     await sendPromptToMappedAgent(ctx, deps, result.text);
+
+    await deps.api.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      `✅ <b>Sent to Cursor</b>\n${escapeHtml(preview.length > 280 ? `${preview.slice(0, 279)}…` : preview)}`,
+      { message_thread_id: threadId, parse_mode: 'HTML' }
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[telegram-voice] Failed: ${msg}`);
-    await ctx.reply(`⚠️ ${msg}`);
+    try {
+      await deps.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `⚠️ ${escapeHtml(msg)}`,
+        { message_thread_id: threadId, parse_mode: 'HTML' }
+      );
+    } catch {
+      await ctx.reply(`⚠️ ${msg}`);
+    }
   } finally {
     if (audioPath) {
       unlink(audioPath).catch(() => {});

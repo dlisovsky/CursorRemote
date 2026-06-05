@@ -142,6 +142,11 @@
           "default": true,
           "markdownDescription": "Transcribe Telegram voice notes locally and send the text to the mapped Cursor agent."
         },
+        "cursorRemote.telegram.compactLive": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "While the agent is working, update one live status message in each topic instead of posting a new message for every tool/thought step."
+        },
         "cursorRemote.transcribe.pythonPath": {
           "type": "string",
           "default": "python3",
@@ -151,6 +156,11 @@
           "type": "string",
           "default": "small",
           "markdownDescription": "faster-whisper model size (`tiny`, `base`, `small`, `medium`). `small` is a good default for Russian and English on Apple Silicon."
+        },
+        "cursorRemote.transcribe.languages": {
+          "type": "string",
+          "default": "en,ru",
+          "markdownDescription": "Telegram voice: comma-separated ISO language codes Whisper may use (e.g. `en,ru`). Detection never picks outside this list."
         }
       }
     },

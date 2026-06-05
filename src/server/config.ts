@@ -3,6 +3,14 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ServerConfig, SelectorConfig } from './types.js';
 
+/** Allowed Whisper language codes for Telegram voice (comma-separated env). */
+export function parseTranscribeLanguages(raw: string | undefined): string[] {
+  const fallback = ['en', 'ru'];
+  if (!raw?.trim()) return fallback;
+  const langs = raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return langs.length > 0 ? langs : fallback;
+}
+
 export function loadConfig(): ServerConfig {
   const preRegisteredRaw = process.env.TELEGRAM_ALLOWED_USERS ?? '';
   const preRegisteredUsers = preRegisteredRaw
@@ -29,11 +37,13 @@ export function loadConfig(): ServerConfig {
       preRegisteredUsers,
       impl: (process.env.TELEGRAM_IMPL === 'raw' ? 'raw' : 'grammy') as 'grammy' | 'raw',
       voiceEnabled: process.env.TELEGRAM_VOICE_ENABLED !== 'false',
+      compactLive: process.env.TELEGRAM_COMPACT_LIVE !== 'false',
     },
     transcribe: {
       pythonPath: process.env.TRANSCRIBE_PYTHON ?? 'python3',
       model: process.env.TRANSCRIBE_MODEL ?? 'small',
       scriptPath: process.env.TRANSCRIBE_SCRIPT || undefined,
+      languages: parseTranscribeLanguages(process.env.TRANSCRIBE_LANGUAGES),
       timeoutMs: parseInt(process.env.TRANSCRIBE_TIMEOUT_MS ?? '600000', 10),
     },
   };

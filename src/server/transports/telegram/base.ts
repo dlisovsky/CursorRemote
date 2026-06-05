@@ -18,6 +18,8 @@ import {
   formatComposerQueue,
   splitMessage,
   activityRedundantWithInProgressStepSummary,
+  formatLiveFeed,
+  isEphemeralElement,
   type FormattedMessage,
 } from './formatter.js';
 import { AGENT_ACTIVITY_STALE_MS } from '../../activity-stale.js';
@@ -130,6 +132,8 @@ export abstract class BaseTelegramTransport implements Transport {
   private activityMsgIds = new Map<number, number>();
   private lastActivityText = new Map<number, string>();
   private activityTimestamps = new Map<number, number>();
+  private liveFeedMsgIds = new Map<number, number>();
+  private lastLiveFeedHash = new Map<number, string>();
   private queueMsgIds = new Map<number, number>();
   private lastQueueSig = new Map<number, string>();
   protected authState: AuthState;
@@ -286,6 +290,7 @@ export abstract class BaseTelegramTransport implements Transport {
     this.started = false;
     this.detachListeners();
     if (this.activityStaleTimer) { clearInterval(this.activityStaleTimer); this.activityStaleTimer = null; }
+    this.deleteAllLiveFeedMessages();
     this.deleteAllActivityMessages();
     this.stopTyping();
     this.messageTracker.flush();
@@ -405,8 +410,30 @@ export abstract class BaseTelegramTransport implements Transport {
     this.pendingSnapshots.clear();
     this.topicManager.clearAll();
     this.messageTracker.clearAll();
+    this.deleteAllLiveFeedMessages();
     this.deleteAllActivityMessages();
     console.log('[telegram] All state reset');
+  }
+
+  private deleteLiveFeedMessage(threadId: number): void {
+    const msgId = this.liveFeedMsgIds.get(threadId);
+    if (!msgId || !this.chatId) return;
+    this.api.deleteMessage(this.chatId, msgId).catch(() => {});
+    this.liveFeedMsgIds.delete(threadId);
+    this.lastLiveFeedHash.delete(threadId);
+  }
+
+  private deleteAllLiveFeedMessages(): void {
+    for (const threadId of [...this.liveFeedMsgIds.keys()]) {
+      this.deleteLiveFeedMessage(threadId);
+    }
+  }
+
+  private static isAgentBusy(snapshot: WindowSnapshot): boolean {
+    if (snapshot.agentActivityLive) return true;
+    return snapshot.agentStatus === 'thinking'
+      || snapshot.agentStatus === 'generating'
+      || snapshot.agentStatus === 'running_tool';
   }
 
   private deleteActivityMessage(threadId: number): void {
@@ -524,12 +551,62 @@ export abstract class BaseTelegramTransport implements Transport {
     ).catch(() => {});
 
     if (!connected) {
+      this.deleteAllLiveFeedMessages();
       this.deleteAllActivityMessages();
       this.stopTyping();
     }
   };
 
   // --- Message processing ---
+
+  private async syncLiveFeedMessage(
+    threadId: number,
+    snapshot: WindowSnapshot,
+    ephemeralElements: ChatElement[],
+    allMessages: ChatElement[]
+  ): Promise<void> {
+    if (!this.chatId || !this.config.compactLive) return;
+
+    const activityText = snapshot.agentActivityLive ? snapshot.agentActivityText : null;
+    const hashCallback = (sp: string) => this.messageTracker.hashSelector(sp);
+    const html = formatLiveFeed(activityText, ephemeralElements, allMessages, hashCallback);
+    const contentHash = MessageTracker.contentHash(html || '(empty)');
+    const existingId = this.liveFeedMsgIds.get(threadId);
+
+    if (!html) {
+      if (existingId) this.deleteLiveFeedMessage(threadId);
+      return;
+    }
+
+    if (this.lastLiveFeedHash.get(threadId) === contentHash && existingId) return;
+
+    try {
+      if (existingId) {
+        await this.sendQueue.enqueue(
+          () => this.api.editMessageText(this.chatId!, existingId, html, { parse_mode: 'HTML' }),
+          'edit'
+        );
+      } else {
+        const sent = await this.sendQueue.enqueue(
+          () => this.api.sendMessage(this.chatId!, html, {
+            message_thread_id: threadId,
+            parse_mode: 'HTML',
+          }),
+          'send'
+        );
+        this.liveFeedMsgIds.set(threadId, sent.message_id);
+      }
+      this.lastLiveFeedHash.set(threadId, contentHash);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('message to edit not found')) {
+        this.liveFeedMsgIds.delete(threadId);
+        this.lastLiveFeedHash.delete(threadId);
+      } else if (!msg.includes('message is not modified')) {
+        console.warn(`[telegram] Live feed update failed: ${msg}`);
+      }
+    }
+  }
 
   private async syncComposerQueueMessage(threadId: number, snapshot: WindowSnapshot): Promise<void> {
     if (!this.chatId) return;
@@ -698,55 +775,69 @@ export abstract class BaseTelegramTransport implements Transport {
     }
 
     const messages = snapshot.messages;
+    const hashCallback = (sp: string) => this.messageTracker.hashSelector(sp);
+    const tailForEphemeral = messages.slice(-Math.min(messages.length, MAX_INITIAL_MESSAGES + 10));
+    const ephemeralInTail = tailForEphemeral.filter(isEphemeralElement);
+    const agentBusy = BaseTelegramTransport.isAgentBusy(snapshot);
+    const useCompactLive = this.config.compactLive && (agentBusy || ephemeralInTail.length > 0);
 
-    const activityText = snapshot.agentActivityLive ? snapshot.agentActivityText : null;
-    const existingActivityMsgId = this.activityMsgIds.get(threadId);
-    const prevActivityText = this.lastActivityText.get(threadId);
-    const now = Date.now();
-    const activitySuppressed = activityRedundantWithInProgressStepSummary(activityText ?? undefined, messages);
-
-    if (activitySuppressed && existingActivityMsgId) {
-      this.deleteActivityMessage(threadId);
-    }
-
-    if (!activitySuppressed) {
-      if (activityText && !this.activityMsgIds.get(threadId)) {
-        const html = formatActivity(activityText);
-        try {
-          const sent = await this.sendQueue.enqueue(
-            () => this.api.sendMessage(this.chatId!, html, {
-              message_thread_id: threadId,
-              parse_mode: 'HTML',
-            }),
-            'send'
-          );
-          this.activityMsgIds.set(threadId, sent.message_id);
-          this.lastActivityText.set(threadId, activityText);
-          this.activityTimestamps.set(threadId, now);
-          this.saveActivityState();
-          console.log(`[telegram] Activity sent: "${activityText}" (msgId=${sent.message_id})`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[telegram] Activity send failed: ${msg}`);
-        }
-      } else if (activityText && this.activityMsgIds.get(threadId) && activityText !== prevActivityText) {
-        const msgId = this.activityMsgIds.get(threadId)!;
-        const html = formatActivity(activityText);
-        try {
-          await this.sendQueue.enqueue(
-            () => this.api.editMessageText(this.chatId!, msgId, html, {
-              parse_mode: 'HTML',
-            }),
-            'edit'
-          );
-          this.lastActivityText.set(threadId, activityText);
-          this.activityTimestamps.set(threadId, now);
-        } catch { /* message might not have changed */ }
+    if (useCompactLive) {
+      if (this.activityMsgIds.has(threadId)) {
+        this.deleteActivityMessage(threadId);
       }
-    }
+      await this.syncLiveFeedMessage(threadId, snapshot, ephemeralInTail, messages);
+    } else {
+      this.deleteLiveFeedMessage(threadId);
 
-    if (!activityText && this.activityMsgIds.has(threadId)) {
-      this.deleteActivityMessage(threadId);
+      const activityText = snapshot.agentActivityLive ? snapshot.agentActivityText : null;
+      const existingActivityMsgId = this.activityMsgIds.get(threadId);
+      const prevActivityText = this.lastActivityText.get(threadId);
+      const now = Date.now();
+      const activitySuppressed = activityRedundantWithInProgressStepSummary(activityText ?? undefined, messages);
+
+      if (activitySuppressed && existingActivityMsgId) {
+        this.deleteActivityMessage(threadId);
+      }
+
+      if (!activitySuppressed) {
+        if (activityText && !this.activityMsgIds.get(threadId)) {
+          const html = formatActivity(activityText);
+          try {
+            const sent = await this.sendQueue.enqueue(
+              () => this.api.sendMessage(this.chatId!, html, {
+                message_thread_id: threadId,
+                parse_mode: 'HTML',
+              }),
+              'send'
+            );
+            this.activityMsgIds.set(threadId, sent.message_id);
+            this.lastActivityText.set(threadId, activityText);
+            this.activityTimestamps.set(threadId, now);
+            this.saveActivityState();
+            console.log(`[telegram] Activity sent: "${activityText}" (msgId=${sent.message_id})`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[telegram] Activity send failed: ${msg}`);
+          }
+        } else if (activityText && this.activityMsgIds.get(threadId) && activityText !== prevActivityText) {
+          const msgId = this.activityMsgIds.get(threadId)!;
+          const html = formatActivity(activityText);
+          try {
+            await this.sendQueue.enqueue(
+              () => this.api.editMessageText(this.chatId!, msgId, html, {
+                parse_mode: 'HTML',
+              }),
+              'edit'
+            );
+            this.lastActivityText.set(threadId, activityText);
+            this.activityTimestamps.set(threadId, now);
+          } catch { /* message might not have changed */ }
+        }
+      }
+
+      if (!activityText && this.activityMsgIds.has(threadId)) {
+        this.deleteActivityMessage(threadId);
+      }
     }
 
     await this.syncComposerQueueMessage(threadId, snapshot);
@@ -772,11 +863,11 @@ export abstract class BaseTelegramTransport implements Transport {
       }
     }
 
-    const hashCallback = (sp: string) => this.messageTracker.hashSelector(sp);
     const tail = messages.slice(-Math.min(messages.length, MAX_INITIAL_MESSAGES + 10));
 
     for (const element of tail) {
       if (element.type === 'loading') continue;
+      if (useCompactLive && isEphemeralElement(element)) continue;
 
       const formatted = formatElement(element, hashCallback);
       if (!formatted.html) continue;

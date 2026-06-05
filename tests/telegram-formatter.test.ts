@@ -8,6 +8,8 @@ import {
   formatQuestionnaire,
   thoughtAppearsInProgress,
   activityRedundantWithInProgressStepSummary,
+  isEphemeralElement,
+  formatLiveFeed,
 } from '../src/server/transports/telegram/formatter.js';
 import type {
   ChatElement,
@@ -143,6 +145,47 @@ describe('activityRedundantWithInProgressStepSummary', () => {
       },
     ];
     assert.equal(activityRedundantWithInProgressStepSummary('Planning next moves', elements), false);
+  });
+});
+
+// ─── compact live feed helpers ───
+
+describe('isEphemeralElement', () => {
+  it('treats loading tools as ephemeral', () => {
+    const tool: ToolCallElement = {
+      type: 'tool', id: 'tool:1', flatIndex: 1, toolCallId: 'tc1',
+      status: 'loading', action: 'Read', details: 'foo.ts',
+    };
+    assert.equal(isEphemeralElement(tool), true);
+    assert.equal(isEphemeralElement({ ...tool, status: 'completed' }), false);
+  });
+
+  it('treats in-progress thoughts as ephemeral', () => {
+    const thought: ThoughtBlock = {
+      type: 'thought', id: 't1', flatIndex: 0, duration: '',
+      action: 'Exploring', thoughtKind: 'step_summary',
+    };
+    assert.equal(isEphemeralElement(thought), true);
+    assert.equal(
+      isEphemeralElement({ ...thought, duration: 'for 3s' }),
+      false
+    );
+  });
+});
+
+describe('formatLiveFeed', () => {
+  it('combines activity and ephemeral lines', () => {
+    const ephemeral: ChatElement[] = [{
+      type: 'tool', id: 'tool:1', flatIndex: 1, toolCallId: 'tc1',
+      status: 'loading', action: 'Grep', details: 'pattern',
+    }];
+    const html = formatLiveFeed('Planning next moves', ephemeral, [], dummyHash);
+    assert.match(html, /Planning next moves/);
+    assert.match(html, /Grep/);
+  });
+
+  it('returns empty when nothing to show', () => {
+    assert.equal(formatLiveFeed(null, [], [], dummyHash), '');
   });
 });
 

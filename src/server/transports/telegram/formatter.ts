@@ -192,6 +192,39 @@ export function activityRedundantWithInProgressStepSummary(
   return false;
 }
 
+/** In-flight DOM rows that should update a single live Telegram message, not spawn new ones. */
+export function isEphemeralElement(element: ChatElement): boolean {
+  if (element.type === 'tool') return element.status === 'loading';
+  if (element.type === 'thought') return thoughtAppearsInProgress(element);
+  return false;
+}
+
+/** One editable status bubble: activity line + recent in-flight steps/tools. */
+export function formatLiveFeed(
+  activityText: string | null,
+  ephemeralElements: ChatElement[],
+  allMessages: ChatElement[],
+  hashCallback: (selectorPath: string) => string
+): string {
+  const lines: string[] = [];
+  const suppressed = activityText
+    ? activityRedundantWithInProgressStepSummary(activityText, allMessages)
+    : false;
+  if (activityText && !suppressed) {
+    lines.push(formatActivity(activityText));
+  }
+  for (const el of ephemeralElements.slice(-12)) {
+    const { html } = formatElement(el, hashCallback);
+    if (html) lines.push(html);
+  }
+  if (lines.length === 0) return '';
+  let body = lines.join('\n');
+  if (body.length > TG_MSG_LIMIT) {
+    body = `…\n${body.slice(-(TG_MSG_LIMIT - 4))}`;
+  }
+  return body;
+}
+
 function formatThought(msg: ThoughtBlock): FormattedMessage {
   const spoiler = shimmerSpoiler(thoughtAppearsInProgress(msg));
   if (msg.thoughtKind === 'step_summary' && msg.action) {

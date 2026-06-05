@@ -12,13 +12,20 @@ describe('resolveTranscribeScript', () => {
     const path = resolveTranscribeScript({
       pythonPath: 'python3',
       model: 'small',
+      languages: ['en', 'ru'],
+      timeoutMs: 600_000,
       scriptPath: tmp,
     });
     assert.equal(path, tmp);
   });
 
   it('falls back to bundled or dev transcribe script', () => {
-    const path = resolveTranscribeScript({ pythonPath: 'python3', model: 'small' });
+    const path = resolveTranscribeScript({
+      pythonPath: 'python3',
+      model: 'small',
+      languages: ['en', 'ru'],
+      timeoutMs: 600_000,
+    });
     const expected = [
       resolve(process.cwd(), 'dist/transcribe/transcribe-voice.py'),
       resolve(process.cwd(), 'scripts/transcribe-voice.py'),
@@ -30,6 +37,8 @@ describe('resolveTranscribeScript', () => {
     const path = resolveTranscribeScript({
       pythonPath: 'python3',
       model: 'small',
+      languages: ['en', 'ru'],
+      timeoutMs: 600_000,
       scriptPath: '/nonexistent/transcribe-voice.py',
     });
     assert.notEqual(path, '/nonexistent/transcribe-voice.py');
