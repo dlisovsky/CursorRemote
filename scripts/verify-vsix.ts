@@ -8,6 +8,7 @@ const PKG_PATH = resolve(DEV_ROOT, 'package.json');
 const REQUIRED_FILES = [
   'extension/dist/extension.cjs',
   'extension/dist/server/bundle.mjs',
+  'extension/dist/transcribe/transcribe-voice.py',
   'extension/dist/client/index.html',
   'extension/dist/client/app.js',
   'extension/dist/client/styles.css',

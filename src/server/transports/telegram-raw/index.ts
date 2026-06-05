@@ -1,4 +1,4 @@
-import type { TelegramConfig } from '../../types.js';
+import type { TelegramConfig, TranscribeConfig } from '../../types.js';
 import type { StateManager } from '../../state-manager.js';
 import type { CommandExecutor } from '../../command-executor.js';
 import type { CDPBridge } from '../../cdp-bridge.js';
@@ -10,6 +10,7 @@ import {
   handleRegister,
   handleCallbackQuery,
   handleTextMessage,
+  handleVoiceMessage,
 } from '../telegram/commands.js';
 import { RawTelegramApiClient, type TgUpdate } from './raw-api.js';
 
@@ -32,9 +33,11 @@ export class RawTelegramTransport extends BaseTelegramTransport {
     windowMonitor: WindowMonitor,
     stateManager: StateManager,
     commandExecutor: CommandExecutor,
-    cdpBridge: CDPBridge
+    cdpBridge: CDPBridge,
+    transcribeConfig: TranscribeConfig,
+    serverDataDir: string
   ) {
-    super(config, windowMonitor, stateManager, commandExecutor, cdpBridge);
+    super(config, windowMonitor, stateManager, commandExecutor, cdpBridge, transcribeConfig, serverDataDir);
     this.rawApi = new RawTelegramApiClient(config.botToken);
     this.api = this.rawApi;
   }
@@ -138,7 +141,12 @@ export class RawTelegramTransport extends BaseTelegramTransport {
   // --- Update dispatch ---
 
   private async dispatchUpdate(update: TgUpdate): Promise<void> {
-    if (update.message?.text) {
+    if (update.message?.voice) {
+      const userId = update.message.from?.id;
+      if (!userId || !this.registeredUsers.has(userId)) return;
+      const ctx = this.makeContext(update);
+      await handleVoiceMessage(ctx, this.deps);
+    } else if (update.message?.text) {
       const text = update.message.text;
       const ctx = this.makeContext(update);
 
@@ -182,7 +190,11 @@ export class RawTelegramTransport extends BaseTelegramTransport {
     return {
       from: msg?.from ?? (cbq ? { id: cbq.from.id, username: cbq.from.username, first_name: cbq.from.first_name } : undefined),
       chat: msg?.chat ?? cbq?.message?.chat,
-      message: msg ? { text: msg.text, message_thread_id: msg.message_thread_id } : undefined,
+      message: msg ? {
+        text: msg.text,
+        message_thread_id: msg.message_thread_id,
+        voice: msg.voice ? { file_id: msg.voice.file_id, duration: msg.voice.duration } : undefined,
+      } : undefined,
       callbackQuery: cbq ? {
         data: cbq.data,
         id: cbq.id,

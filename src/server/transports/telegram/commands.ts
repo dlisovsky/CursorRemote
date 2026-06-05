@@ -5,7 +5,10 @@ import type { TopicManager } from './topic-manager.js';
 import type { MessageTracker } from '../message-tracker.js';
 import type { WindowMonitor } from '../../window-monitor.js';
 import { escapeHtml, formatElement, formatPlanFull, mergeFormattedBlocks, splitMessage } from './formatter.js';
-import type { PlanBlock } from '../../types.js';
+import type { PlanBlock, TranscribeConfig } from '../../types.js';
+import { unlink } from 'node:fs/promises';
+import { downloadVoiceFile } from './voice-download.js';
+import { transcribeVoiceFile } from './voice-transcribe.js';
 import { cleanTabTitle } from '../../dom-extractor.js';
 import { normalizeWindowTitle } from './topic-manager.js';
 import { tgKeyboard, type BotContext, type TelegramApiClient } from './tg-types.js';
@@ -19,6 +22,10 @@ export interface CommandDeps {
   messageTracker: MessageTracker;
   windowMonitor: WindowMonitor;
   chatId: number | undefined;
+  botToken: string;
+  voiceEnabled: boolean;
+  transcribe: TranscribeConfig;
+  dataDir: string;
   getSyncEnabled: () => boolean;
   setSyncEnabled: (enabled: boolean, chatId?: number) => void;
   setChatId: (id: number) => void;
@@ -1240,12 +1247,11 @@ export async function handleCallbackQuery(ctx: BotContext, deps: CommandDeps): P
   }
 }
 
-// --- Text messages ---
+// --- Text / voice messages ---
 
-export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
+export async function sendPromptToMappedAgent(ctx: BotContext, deps: CommandDeps, text: string): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
-  const text = ctx.message?.text;
-  if (!threadId || !text) return;
+  if (!threadId) return;
 
   const mapping = deps.topicManager.resolveThread(threadId);
   if (!mapping) {
@@ -1303,4 +1309,49 @@ export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Pro
 
   const result = await deps.commandExecutor.sendMessage(commandId, text);
   if (!result.ok) await ctx.reply(`⚠️ Failed to send: ${result.error}`);
+}
+
+export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
+  const text = ctx.message?.text;
+  if (!ctx.message?.message_thread_id || !text) return;
+  await sendPromptToMappedAgent(ctx, deps, text);
+}
+
+export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  const voice = ctx.message?.voice;
+  if (!threadId || !voice) return;
+
+  if (!deps.voiceEnabled) {
+    await ctx.reply('Voice messages disabled');
+    return;
+  }
+
+  const mapping = deps.topicManager.resolveThread(threadId);
+  if (!mapping) {
+    await ctx.reply('⚠️ This topic is not mapped. Run /sync to set up.');
+    return;
+  }
+
+  console.log(`[telegram-voice] Received voice note duration=${voice.duration}s thread=${threadId}`);
+  await ctx.reply('Transcribing voice message...');
+
+  let audioPath: string | undefined;
+  try {
+    audioPath = await downloadVoiceFile(deps.api, deps.botToken, voice.file_id, deps.dataDir);
+    const result = await transcribeVoiceFile(audioPath, deps.transcribe);
+
+    const preview = result.text.length > 500 ? `${result.text.slice(0, 500)}…` : result.text;
+    await ctx.reply(`Transcribed (${result.language}): ${preview}`);
+
+    await sendPromptToMappedAgent(ctx, deps, result.text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[telegram-voice] Failed: ${msg}`);
+    await ctx.reply(`⚠️ ${msg}`);
+  } finally {
+    if (audioPath) {
+      unlink(audioPath).catch(() => {});
+    }
+  }
 }

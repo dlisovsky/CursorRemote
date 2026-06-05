@@ -51,11 +51,6 @@ export class StatusTreeView implements vscode.TreeDataProvider<TreeItem> {
       licenseItem.command = { command: 'cursorRemote.enterLicenseKey', title: 'Enter License Key' };
       items.push(licenseItem);
 
-      const buyItem = new vscode.TreeItem('Buy License');
-      buyItem.iconPath = new vscode.ThemeIcon('credit-card');
-      buyItem.command = { command: 'cursorRemote.buyLicense', title: 'Buy License' };
-      items.push(buyItem);
-
       items.push(separator());
 
       const setupItem = new vscode.TreeItem('Open Setup Panel');

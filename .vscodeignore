@@ -27,6 +27,8 @@ openvsx_token
 .gitignore
 dist/server/**
 !dist/server/bundle.mjs
+dist/transcribe/**
+!dist/transcribe/transcribe-voice.py
 dist/discovery/
 dist/extension.js
 dist/extension.js.map

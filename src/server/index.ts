@@ -135,7 +135,9 @@ async function main(): Promise<void> {
       windowMonitor,
       stateManager,
       commandExecutor,
-      cdpBridge
+      cdpBridge,
+      config.transcribe,
+      config.dataDir
     );
 
     const names = telegram.registeredUserNames;

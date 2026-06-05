@@ -1,4 +1,5 @@
 import type { TelegramApiClient, TgKeyboard } from '../telegram/tg-types.js';
+import { telegramFetch } from '../telegram/telegram-http.js';
 
 const HTTP_TIMEOUT_MS = 30_000;
 
@@ -10,11 +11,11 @@ export class RawTelegramApiClient implements TelegramApiClient {
   }
 
   private async call<T>(method: string, body?: Record<string, unknown>): Promise<T> {
-    const resp = await fetch(`${this.baseUrl}/${method}`, {
+    const resp = await telegramFetch(`${this.baseUrl}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      timeoutMs: HTTP_TIMEOUT_MS,
     });
     const data = await resp.json() as { ok: boolean; result?: T; description?: string; error_code?: number };
     if (!data.ok) {
@@ -109,12 +110,12 @@ export class RawTelegramApiClient implements TelegramApiClient {
     await this.call('answerCallbackQuery', body);
   }
 
-  async getUpdates(offset: number, timeout: number, signal?: AbortSignal): Promise<TgUpdate[]> {
-    const timeoutSignal = AbortSignal.timeout((timeout + 10) * 1000);
-    const combined = signal
-      ? AbortSignal.any([signal, timeoutSignal])
-      : timeoutSignal;
-    const resp = await fetch(`${this.baseUrl}/getUpdates`, {
+  async getFile(fileId: string): Promise<{ file_path: string; file_size?: number }> {
+    return this.call<{ file_path: string; file_size?: number }>('getFile', { file_id: fileId });
+  }
+
+  async getUpdates(offset: number, timeout: number, _signal?: AbortSignal): Promise<TgUpdate[]> {
+    const resp = await telegramFetch(`${this.baseUrl}/getUpdates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -122,7 +123,7 @@ export class RawTelegramApiClient implements TelegramApiClient {
         timeout,
         allowed_updates: ['message', 'callback_query'],
       }),
-      signal: combined,
+      timeoutMs: (timeout + 10) * 1000,
     });
     const data = await resp.json() as { ok: boolean; result?: TgUpdate[]; description?: string; error_code?: number };
     if (!data.ok) {
@@ -145,6 +146,7 @@ export interface TgMessage {
   from?: { id: number; username?: string; first_name?: string; is_bot?: boolean };
   chat: { id: number; type: string; is_forum?: boolean };
   text?: string;
+  voice?: { file_id: string; duration: number; file_unique_id?: string };
   message_thread_id?: number;
   date: number;
 }

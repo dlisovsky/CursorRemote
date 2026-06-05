@@ -32,7 +32,11 @@ export function tgKeyboard(): TgKeyboardBuilder {
 export interface BotContext {
   from?: { id: number; username?: string; first_name?: string };
   chat?: { id: number; type: string; is_forum?: boolean };
-  message?: { text?: string; message_thread_id?: number };
+  message?: {
+    text?: string;
+    message_thread_id?: number;
+    voice?: { file_id: string; duration: number };
+  };
   callbackQuery?: {
     data?: string;
     id: string;
@@ -72,4 +76,5 @@ export interface TelegramApiClient {
   getMe(): Promise<{ id: number; username?: string; is_bot: boolean; first_name: string }>;
   getChatMember(chatId: number, userId: number): Promise<{ status: string; [key: string]: unknown }>;
   answerCallbackQuery(callbackQueryId: string, options?: { text?: string }): Promise<void>;
+  getFile(fileId: string): Promise<{ file_path: string; file_size?: number }>;
 }

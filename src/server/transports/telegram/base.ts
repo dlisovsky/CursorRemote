@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import type { Transport } from '../types.js';
-import type { TelegramConfig, CursorState, ChatElement } from '../../types.js';
+import type { TelegramConfig, TranscribeConfig, CursorState, ChatElement } from '../../types.js';
 import type { StateManager } from '../../state-manager.js';
 import type { CommandExecutor } from '../../command-executor.js';
 import type { CDPBridge } from '../../cdp-bridge.js';
@@ -23,6 +23,7 @@ import {
 import { AGENT_ACTIVITY_STALE_MS } from '../../activity-stale.js';
 import type { TelegramApiClient, BotContext } from './tg-types.js';
 import type { CommandDeps, RegisterDeps } from './commands.js';
+import { telegramFetch } from './telegram-http.js';
 import {
   handleSync,
   handleSyncAll,
@@ -88,6 +89,8 @@ export abstract class BaseTelegramTransport implements Transport {
 
   protected api!: TelegramApiClient;
   protected config: TelegramConfig;
+  protected transcribeConfig: TranscribeConfig;
+  protected serverDataDir: string;
   protected stateManager: StateManager;
   protected commandExecutor: CommandExecutor;
   protected cdpBridge: CDPBridge;
@@ -151,9 +154,13 @@ export abstract class BaseTelegramTransport implements Transport {
     windowMonitor: WindowMonitor,
     stateManager: StateManager,
     commandExecutor: CommandExecutor,
-    cdpBridge: CDPBridge
+    cdpBridge: CDPBridge,
+    transcribeConfig: TranscribeConfig,
+    serverDataDir: string
   ) {
     this.config = config;
+    this.transcribeConfig = transcribeConfig;
+    this.serverDataDir = serverDataDir;
     this.windowMonitor = windowMonitor;
     this.stateManager = stateManager;
     this.commandExecutor = commandExecutor;
@@ -190,7 +197,7 @@ export abstract class BaseTelegramTransport implements Transport {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const resp = await fetch(`${apiBase}/getMe`, { signal: AbortSignal.timeout(10000) });
+        const resp = await telegramFetch(`${apiBase}/getMe`, { timeoutMs: 10000 });
         const data = await resp.json() as { ok: boolean; error_code?: number; description?: string; result?: { username?: string } };
 
         if (data.ok) {
@@ -231,14 +238,14 @@ export abstract class BaseTelegramTransport implements Transport {
     console.log(`[telegram] API reachable — bot: @${botUsername}`);
 
     try {
-      await fetch(`${apiBase}/deleteWebhook?drop_pending_updates=true`, { signal: AbortSignal.timeout(5000) });
+      await telegramFetch(`${apiBase}/deleteWebhook?drop_pending_updates=true`, { timeoutMs: 5000 });
       console.log('[telegram] Cleared any stale webhook/session (dropped pending updates)');
     } catch {
       // non-fatal
     }
 
     try {
-      const probe = await fetch(`${apiBase}/getUpdates?limit=1&timeout=0`, { signal: AbortSignal.timeout(10000) });
+      const probe = await telegramFetch(`${apiBase}/getUpdates?limit=1&timeout=0`, { timeoutMs: 10000 });
       const probeData = await probe.json() as { ok: boolean; error_code?: number; description?: string };
       if (!probeData.ok && (probe.status === 409 || probeData.error_code === 409)) {
         console.error('[telegram] 409 Conflict — another bot instance is already polling with this token');
@@ -297,6 +304,10 @@ export abstract class BaseTelegramTransport implements Transport {
       messageTracker: this.messageTracker,
       windowMonitor: this.windowMonitor,
       get chatId() { return self.groupId; },
+      botToken: this.config.botToken,
+      voiceEnabled: this.config.voiceEnabled,
+      transcribe: this.transcribeConfig,
+      dataDir: this.serverDataDir,
       getSyncEnabled: () => this.syncEnabled,
       setSyncEnabled: (enabled: boolean, chatId?: number) => {
         this.syncEnabled = enabled;

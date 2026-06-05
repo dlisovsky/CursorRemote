@@ -28,6 +28,13 @@ export function loadConfig(): ServerConfig {
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
       preRegisteredUsers,
       impl: (process.env.TELEGRAM_IMPL === 'raw' ? 'raw' : 'grammy') as 'grammy' | 'raw',
+      voiceEnabled: process.env.TELEGRAM_VOICE_ENABLED !== 'false',
+    },
+    transcribe: {
+      pythonPath: process.env.TRANSCRIBE_PYTHON ?? 'python3',
+      model: process.env.TRANSCRIBE_MODEL ?? 'small',
+      scriptPath: process.env.TRANSCRIBE_SCRIPT || undefined,
+      timeoutMs: parseInt(process.env.TRANSCRIBE_TIMEOUT_MS ?? '600000', 10),
     },
   };
 }

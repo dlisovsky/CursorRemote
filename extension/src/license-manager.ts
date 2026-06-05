@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 
-const STORE_URL = 'https://cursor-remote.com/buy?utm_source=extension&utm_medium=command&utm_campaign=license';
 const SECRET_KEY = 'cursorRemote.licenseKey';
 const KEY_FORMAT = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
@@ -26,8 +25,7 @@ export class LicenseManager {
   }
 
   async checkLicense(): Promise<boolean> {
-    const key = await this.context.secrets.get(SECRET_KEY);
-    return key !== undefined && validateKey(key);
+    return true;
   }
 
   async promptForKey(): Promise<void> {
@@ -47,31 +45,13 @@ export class LicenseManager {
     if (input) {
       const normalized = input.trim().toUpperCase();
       await this.context.secrets.store(SECRET_KEY, normalized);
-      vscode.window.showInformationMessage('License key saved. Thank you for supporting the project.');
+      vscode.window.showInformationMessage('License key saved.');
       this.onLicenseValid();
-    }
-  }
-
-  async showActivationPrompt(): Promise<void> {
-    const choice = await vscode.window.showWarningMessage(
-      'CursorRemote requires a license key.',
-      'Enter Key',
-      'Buy License'
-    );
-
-    if (choice === 'Enter Key') {
-      await this.promptForKey();
-    } else if (choice === 'Buy License') {
-      await this.openBuyLink();
     }
   }
 
   async clearKey(): Promise<void> {
     await this.context.secrets.delete(SECRET_KEY);
     vscode.window.showInformationMessage('License key cleared.');
-  }
-
-  async openBuyLink(): Promise<void> {
-    await vscode.env.openExternal(vscode.Uri.parse(STORE_URL));
   }
 }

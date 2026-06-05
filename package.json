@@ -1,7 +1,7 @@
 {
   "name": "cursor-remote",
   "displayName": "CursorRemote",
-  "version": "0.1.46",
+  "version": "0.1.48",
   "description": "Remote control your local Cursor AI agent — monitor, approve, and send tasks from your phone or Telegram.",
   "publisher": "cursor-remote",
   "repository": {
@@ -49,10 +49,6 @@
       {
         "command": "cursorRemote.enterLicenseKey",
         "title": "CursorRemote: Enter License Key"
-      },
-      {
-        "command": "cursorRemote.buyLicense",
-        "title": "CursorRemote: Buy License"
       },
       {
         "command": "cursorRemote.clearLicenseKey",
@@ -140,6 +136,21 @@
             "raw"
           ],
           "markdownDescription": "Telegram transport implementation. Use `grammy` (default) for the Grammy framework, or `raw` for a lightweight fetch-based transport if Grammy hangs on startup."
+        },
+        "cursorRemote.telegram.voiceEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Transcribe Telegram voice notes locally and send the text to the mapped Cursor agent."
+        },
+        "cursorRemote.transcribe.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "markdownDescription": "Python interpreter for local voice transcription (e.g. `~/.cursor-remote-transcribe/bin/python` after installing faster-whisper)."
+        },
+        "cursorRemote.transcribe.model": {
+          "type": "string",
+          "default": "small",
+          "markdownDescription": "faster-whisper model size (`tiny`, `base`, `small`, `medium`). `small` is a good default for Russian and English on Apple Silicon."
         }
       }
     },
@@ -166,17 +177,6 @@
         "title": "Get Started with CursorRemote",
         "description": "Monitor sessions, approve steps, and send tasks from your phone or Telegram.",
         "steps": [
-          {
-            "id": "cursorRemote.walkthrough.license",
-            "title": "Enter License Key",
-            "description": "Enter your license key to activate CursorRemote.\n\n[Enter License Key](command:cursorRemote.enterLicenseKey)\n\nDon't have a key? [Buy one here](https://cursor-remote.com/buy?utm_source=extension&utm_medium=walkthrough&utm_campaign=license).",
-            "media": {
-              "markdown": "extension/media/walkthrough/license.md"
-            },
-            "completionEvents": [
-              "onCommand:cursorRemote.enterLicenseKey"
-            ]
-          },
           {
             "id": "cursorRemote.walkthrough.cdp",
             "title": "Verify CDP Connection",
@@ -227,7 +227,7 @@
   },
   "scripts": {
     "dev": "mkdir -p temp data && tsx scripts/dev-wrapper.ts",
-    "build": "tsc && rm -rf dist/client && cp -r src/client dist/client && cp node_modules/socket.io/client-dist/socket.io.min.js dist/client/vendor-socket.io.min.js && cp node_modules/socket.io/client-dist/socket.io.min.js.map dist/client/vendor-socket.io.min.js.map",
+    "build": "tsc && rm -rf dist/client && cp -r src/client dist/client && cp node_modules/socket.io/client-dist/socket.io.min.js dist/client/vendor-socket.io.min.js && cp node_modules/socket.io/client-dist/socket.io.min.js.map dist/client/vendor-socket.io.min.js.map && mkdir -p dist/transcribe && cp scripts/transcribe-voice.py dist/transcribe/transcribe-voice.py",
     "build:ext": "node extension/esbuild.js --production",
     "watch:ext": "node extension/esbuild.js --watch",
     "package": "tsx scripts/bump-build.ts && mkdir -p releases && npx @vscode/vsce package --no-dependencies --out releases/ && tsx scripts/verify-vsix.ts",

@@ -334,6 +334,14 @@ export interface CommandResult {
   data?: unknown;
 }
 
+export interface TranscribeConfig {
+  pythonPath: string;
+  model: string;
+  scriptPath?: string;
+  /** Max wait for transcription (includes first-time model download). */
+  timeoutMs: number;
+}
+
 export interface ServerConfig {
   cdpUrl: string;
   serverPort: number;
@@ -346,6 +354,7 @@ export interface ServerConfig {
   windowTitleQualifier: boolean;
   dataDir: string;
   telegram: TelegramConfig;
+  transcribe: TranscribeConfig;
 }
 
 export interface TelegramConfig {
@@ -353,4 +362,5 @@ export interface TelegramConfig {
   botToken: string;
   preRegisteredUsers: number[];
   impl: 'grammy' | 'raw';
+  voiceEnabled: boolean;
 }

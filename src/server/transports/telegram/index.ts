@@ -1,16 +1,18 @@
 import { Bot } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
-import type { TelegramConfig } from '../../types.js';
+import type { TelegramConfig, TranscribeConfig } from '../../types.js';
 import type { StateManager } from '../../state-manager.js';
 import type { CommandExecutor } from '../../command-executor.js';
 import type { CDPBridge } from '../../cdp-bridge.js';
 import type { WindowMonitor } from '../../window-monitor.js';
 import { BaseTelegramTransport, BOT_COMMANDS } from './base.js';
+import { telegramFetch } from './telegram-http.js';
 import type { TelegramApiClient, BotContext, TgKeyboard } from './tg-types.js';
 import {
   handleRegister,
   handleCallbackQuery,
   handleTextMessage,
+  handleVoiceMessage,
 } from './commands.js';
 
 function grammyApiAdapter(bot: Bot): TelegramApiClient {
@@ -37,6 +39,8 @@ function grammyApiAdapter(bot: Bot): TelegramApiClient {
       bot.api.getChatMember(chatId, userId) as unknown as Promise<{ status: string; [key: string]: unknown }>,
     answerCallbackQuery: (id, opts) =>
       bot.api.raw.answerCallbackQuery({ callback_query_id: id, ...opts }).then(() => {}),
+    getFile: (fileId) =>
+      bot.api.getFile(fileId) as Promise<{ file_path: string; file_size?: number }>,
   };
 }
 
@@ -45,7 +49,14 @@ function grammyCtxToBotCtx(ctx: import('grammy').Context): BotContext {
   return {
     from: ctx.from ? { id: ctx.from.id, username: ctx.from.username, first_name: ctx.from.first_name } : undefined,
     chat: chat ? { id: chat.id, type: chat.type, is_forum: (chat as unknown as Record<string, unknown>).is_forum as boolean | undefined } : undefined,
-    message: ctx.message ? { text: ctx.message.text, message_thread_id: ctx.message.message_thread_id } : undefined,
+    message: ctx.message ? {
+      text: ctx.message.text,
+      message_thread_id: ctx.message.message_thread_id,
+      voice: ctx.message.voice ? {
+        file_id: ctx.message.voice.file_id,
+        duration: ctx.message.voice.duration,
+      } : undefined,
+    } : undefined,
     callbackQuery: ctx.callbackQuery ? {
       data: ctx.callbackQuery.data,
       id: ctx.callbackQuery.id,
@@ -72,13 +83,15 @@ export class TelegramTransport extends BaseTelegramTransport {
     windowMonitor: WindowMonitor,
     stateManager: StateManager,
     commandExecutor: CommandExecutor,
-    cdpBridge: CDPBridge
+    cdpBridge: CDPBridge,
+    transcribeConfig: TranscribeConfig,
+    serverDataDir: string
   ) {
-    super(config, windowMonitor, stateManager, commandExecutor, cdpBridge);
+    super(config, windowMonitor, stateManager, commandExecutor, cdpBridge, transcribeConfig, serverDataDir);
 
     const grammyFetch: typeof fetch = (input, init) => {
-      if (init?.signal) return fetch(input, init);
-      return fetch(input, { ...init, signal: AbortSignal.timeout(30000) });
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      return telegramFetch(url, { ...init, timeoutMs: 30_000 }) as ReturnType<typeof fetch>;
     };
     this.bot = new Bot(config.botToken, { client: { fetch: grammyFetch } });
     this.bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));
@@ -186,6 +199,10 @@ export class TelegramTransport extends BaseTelegramTransport {
       if (ctx.message.text?.startsWith('/')) return;
       return handleTextMessage(grammyCtxToBotCtx(ctx), deps);
     });
+
+    this.bot.on('message:voice', (ctx) =>
+      handleVoiceMessage(grammyCtxToBotCtx(ctx), deps)
+    );
 
     this.bot.catch((err) => {
       console.error('[telegram] Bot error:', err.message ?? err);

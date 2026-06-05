@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { createOutputChannel } from './output-channel.js';
 import { createStatusBar } from './status-bar.js';
 import { ServerManager } from './server-manager.js';
@@ -61,12 +63,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('cursorRemote.stop', () => serverManager!.stop(true)),
     vscode.commands.registerCommand('cursorRemote.restart', () => serverManager!.restart()),
     vscode.commands.registerCommand('cursorRemote.openWebClient', () => serverManager!.openWebClient()),
-    vscode.commands.registerCommand('cursorRemote.showLogs', () => outputChannel.show()),
+    vscode.commands.registerCommand('cursorRemote.showLogs', () => {
+      const logPath = join(context.extensionPath, 'temp', 'server.log');
+      if (existsSync(logPath)) {
+        try {
+          const content = readFileSync(logPath, 'utf-8');
+          const lines = content.trim().split('\n');
+          const tail = lines.slice(-80);
+          outputChannel.appendLine('--- server.log (last 80 lines) ---');
+          for (const line of tail) outputChannel.appendLine(line);
+        } catch (err) {
+          outputChannel.warn(`Could not read server.log: ${err instanceof Error ? err.message : err}`);
+        }
+      } else {
+        outputChannel.appendLine('No server.log yet — start the server first.');
+      }
+      void vscode.commands.executeCommand('workbench.action.output.show', 'CursorRemote');
+    }),
     vscode.commands.registerCommand('cursorRemote.enterLicenseKey', async () => {
       await licenseManager.promptForKey();
       treeView.refresh();
     }),
-    vscode.commands.registerCommand('cursorRemote.buyLicense', () => licenseManager.openBuyLink()),
     vscode.commands.registerCommand('cursorRemote.clearLicenseKey', async () => {
       await licenseManager.clearKey();
       treeView.refresh();
