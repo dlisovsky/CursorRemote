@@ -85,6 +85,12 @@ describe('parseCallbackData', () => {
     );
   });
 
+  it('handles queue and stop callbacks as hash-only', () => {
+    assert.deepEqual(parseCallbackData('qsf:abc12345'), { action: 'qsf', id: '', hash: 'abc12345' });
+    assert.deepEqual(parseCallbackData('qcn:deadbeef'), { action: 'qcn', id: '', hash: 'deadbeef' });
+    assert.deepEqual(parseCallbackData('stp:'), { action: 'stp', id: '', hash: '' });
+  });
+
   it('handles action without payload', () => {
     assert.deepEqual(
       parseCallbackData('refresh'),

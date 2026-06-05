@@ -78,7 +78,7 @@ TelegramTransport.onStatePatch(patch)
   └─ patch.chatTabs? / patch.windows? → (no automatic push, shown on /topics /status)
 ```
 
-**Window snapshots**: In production, `WindowMonitor` fires `window:update` → `TelegramTransport.processWindow` → `doProcessWindow` for each connected window. That path sends **status UI** (compact live feed or legacy activity), **composer queue** summary, and **content messages** using the same `formatter` + `MessageTracker` as above — not only `state:patch`.
+**Window snapshots**: In production, `WindowMonitor` fires `window:update` → `TelegramTransport.processWindow` → `doProcessWindow` for each connected window. That path sends **status UI** (compact live feed or legacy activity), **composer queue** summary (with per-item **⚡ Send now** / **✕ Cancel** buttons via `qsf:` / `qcn:` callbacks), and **content messages** using the same `formatter` + `MessageTracker` as above — not only `state:patch`.
 
 ### 3.2 Inbound: Telegram → Cursor
 
@@ -141,13 +141,15 @@ The main class that implements the `Transport` interface.
 
 - **Inbound dedupe** — prompts sent from Telegram (voice/text/photo) are not echoed back as `You:` human rows from Cursor (`telegram-inbound-prompt.ts`).
 - **Tools off** — `TELEGRAM_SHOW_TOOLS=false` hides all tool step lines in topics; web client unchanged. Old tool messages are deleted on next sync.
-- **One assistant reply** — only the latest assistant message in the sync tail is posted; earlier assistant bubbles in the same turn are removed from Telegram.
+- **One assistant reply per turn** — only the latest assistant message **after the last human** in the sync tail is posted; older in-turn partials are collapsed. Assistant replies from **prior turns** stay on Telegram (they are not deleted when you send a new prompt).
 - **Thoughts** — never posted as separate messages (compact live feed only while agent is busy).
 - Audit outbound traffic via `[telegram-out]` in `temp/server.log`.
 
 **Compact live feed** (`TELEGRAM_COMPACT_LIVE`, default on):
 
-- When the agent is busy or recent messages include ephemeral rows (`isEphemeralElement`: loading tools, in-progress thoughts), `syncLiveFeedMessage` builds HTML via `formatLiveFeed` (activity line + up to 12 ephemeral elements) and **edits one Telegram message** per topic.
+- When the current turn has thinking/tools/activity or the agent is busy, `syncLiveFeedMessage` builds HTML via `formatAgentPanel` (activity + current-turn thoughts/tools + streaming assistant reply) and **edits one Telegram message** per topic. Completed step summaries stay visible in the panel until the turn ends; the assistant reply is appended below instead of replacing the live feed.
+- While the agent is busy, that message (or the legacy activity bubble) includes an inline **⏹ Stop** button (`stp:` callback) that clicks Cursor's composer **Stop generation** control via CDP (`commandExecutor.stopGeneration`).
+- On text/voice/photo send, a **prompt status** message (`<b>You:</b> …`) is posted immediately with **Stop** (before DOM shows thinking). Cursor's duplicate human row is still deduped in sync; the status bubble is reused as the live-feed panel when activity starts.
 - Ephemeral elements are **skipped** in the per-element send loop (`shouldSkipMessageForCompactLive`) so tools/thoughts do not also appear as separate messages.
 - Content-hash dedup (`planLiveFeedUpdate` in `live-feed-sync.ts`) skips redundant `editMessageText` calls.
 - Live feed message IDs persist to `data/telegram-live-feed.json`; on bot connect, `cleanupPersistedLiveFeed()` deletes orphaned bubbles from a prior process.

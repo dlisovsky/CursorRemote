@@ -124,7 +124,7 @@ export class ServerManager extends EventEmitter {
     return false;
   }
 
-  async start(): Promise<void> {
+  async start(options: { announceRestart?: boolean } = {}): Promise<void> {
     this._reactingToFlag = true;
     this.setManualStop(false);
     this._reactingToFlag = false;
@@ -146,7 +146,9 @@ export class ServerManager extends EventEmitter {
     }
 
     const licenseKey = await this.getLicenseKey();
-    const env = buildEnvFromConfig(this.context, licenseKey);
+    const env = buildEnvFromConfig(this.context, licenseKey, {
+      announceRestart: options.announceRestart,
+    });
 
     const dataDir = env.DATA_DIR;
     if (!existsSync(dataDir)) {
@@ -266,7 +268,7 @@ export class ServerManager extends EventEmitter {
 
   async restart(): Promise<void> {
     await this.stop(true);
-    await this.start();
+    await this.start({ announceRestart: true });
   }
 
   async openWebClient(): Promise<void> {

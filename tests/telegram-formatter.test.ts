@@ -10,6 +10,12 @@ import {
   activityRedundantWithInProgressStepSummary,
   isEphemeralElement,
   formatLiveFeed,
+  formatAgentPanel,
+  formatComposerQueue,
+  agentStopKeyboard,
+  agentOffersStopControl,
+  withAgentStopRow,
+  formatInboundPromptStatus,
 } from '../src/server/transports/telegram/formatter.js';
 import type {
   ChatElement,
@@ -45,6 +51,33 @@ describe('formatActivity', () => {
     const html = formatActivity('Reading <script>');
     assert.ok(!html.includes('<script>'));
     assert.match(html, /&lt;script&gt;/);
+  });
+});
+
+describe('agentStopKeyboard', () => {
+  it('exposes stp callback under Telegram 64-byte limit', () => {
+    const kb = agentStopKeyboard();
+    assert.equal(kb.inline_keyboard.length, 1);
+    assert.equal(kb.inline_keyboard[0][0].callback_data, 'stp:');
+    assert.ok(kb.inline_keyboard[0][0].callback_data.length <= 64);
+  });
+
+  it('offers stop during waiting_approval', () => {
+    assert.equal(agentOffersStopControl('waiting_approval', false), true);
+    assert.equal(agentOffersStopControl('idle', false), false);
+  });
+
+  it('withAgentStopRow adds a second row', () => {
+    const merged = withAgentStopRow(agentStopKeyboard());
+    assert.equal(merged.inline_keyboard.length, 2);
+  });
+});
+
+describe('formatInboundPromptStatus', () => {
+  it('renders You line for inbound text', () => {
+    const html = formatInboundPromptStatus('fix the login bug');
+    assert.match(html, /^<b>You:<\/b>/);
+    assert.match(html, /fix the login bug/);
   });
 });
 
@@ -186,6 +219,69 @@ describe('formatLiveFeed', () => {
 
   it('returns empty when nothing to show', () => {
     assert.equal(formatLiveFeed(null, [], [], dummyHash), '');
+  });
+});
+
+describe('formatComposerQueue', () => {
+  it('adds Send now and Cancel buttons when selector paths exist', () => {
+    const hashes: string[] = [];
+    const formatted = formatComposerQueue(
+      {
+        queueLabel: '2 Queued',
+        items: [{
+          id: 'q1',
+          text: 'follow up task',
+          sendNowSelectorPath: 'button.send-now',
+          cancelSelectorPath: 'button.trash',
+        }],
+      },
+      (sp) => {
+        hashes.push(sp);
+        return `h${hashes.length}`;
+      },
+    );
+    assert.match(formatted.html, /2 Queued/);
+    assert.match(formatted.html, /follow up/);
+    assert.ok(formatted.keyboard);
+    const flat = formatted.keyboard!.inline_keyboard.flat();
+    assert.equal(flat.length, 2);
+    assert.equal(flat[0].callback_data, 'qsf:h1');
+    assert.equal(flat[1].callback_data, 'qcn:h2');
+  });
+
+  it('uses queue item id fallback when DOM selector paths are missing', () => {
+    const paths: string[] = [];
+    let n = 0;
+    const formatted = formatComposerQueue(
+      {
+        queueLabel: '1 Queued',
+        items: [{ id: 'item-abc', text: 'next prompt' }],
+      },
+      (sp) => {
+        paths.push(sp);
+        return `h${++n}`;
+      },
+    );
+    assert.deepEqual(paths, ['queue:send:item-abc', 'queue:cancel:item-abc']);
+    assert.ok(formatted.keyboard);
+    const flat = formatted.keyboard!.inline_keyboard.flat();
+    assert.equal(flat[0].callback_data, 'qsf:h1');
+    assert.equal(flat[1].callback_data, 'qcn:h2');
+  });
+});
+
+describe('formatAgentPanel', () => {
+  it('appends assistant reply below live thinking lines', () => {
+    const live: ChatElement[] = [{
+      type: 'thought',
+      id: 'th',
+      flatIndex: 0,
+      action: 'Planning',
+      duration: '',
+    }];
+    const html = formatAgentPanel(null, live, [], '<b>Final answer</b>', dummyHash);
+    assert.match(html, /Planning/);
+    assert.match(html, /Final answer/);
   });
 });
 

@@ -749,6 +749,124 @@ export class CommandExecutor {
     });
   }
 
+  /** Click Cursor's composer "Stop generation" control (same as the in-IDE stop button). */
+  async stopGeneration(commandId: string): Promise<CommandResult> {
+    return this.withRetry(commandId, async (client) => {
+      const strategies = this.selectors.stopGeneration?.strategies ?? [
+        'button[aria-label="Stop generation"]',
+        'button[aria-label*="Stop generation"]',
+      ];
+      const textMatch = this.selectors.stopGeneration?.textMatch ?? ['Stop generation', 'Stop'];
+      const containerStrategies = this.selectors.chatContainer.strategies;
+
+      const clicked = await client.evaluate(`
+        (() => {
+          const strategies = ${JSON.stringify(strategies)};
+          const keywords = ${JSON.stringify(textMatch)};
+          const containerStrategies = ${JSON.stringify(containerStrategies)};
+
+          let root = null;
+          for (const sel of containerStrategies) {
+            try {
+              root = document.querySelector(sel);
+              if (root) break;
+            } catch {}
+          }
+          if (!root) root = document.body;
+
+          const tryClick = (btn) => {
+            const rect = btn.getBoundingClientRect();
+            if (rect.width < 4 || rect.height < 4) return false;
+            if (btn.disabled) return false;
+            btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+            btn.click();
+            return true;
+          };
+
+          for (const selector of strategies) {
+            try {
+              const buttons = root.querySelectorAll(selector);
+              for (const btn of Array.from(buttons)) {
+                if (tryClick(btn)) return true;
+              }
+            } catch {}
+          }
+
+          const allButtons = root.querySelectorAll('button');
+          for (const btn of Array.from(allButtons)) {
+            const label = ((btn.getAttribute('aria-label') || '') + ' ' + (btn.textContent || '')).trim().toLowerCase();
+            for (const kw of keywords) {
+              const k = kw.toLowerCase();
+              if (label.includes(k) && (k.includes('stop') || label.includes('stop generation'))) {
+                if (tryClick(btn)) return true;
+              }
+            }
+          }
+
+          return false;
+        })()
+      `) as boolean;
+
+      if (!clicked) {
+        throw new Error('Stop button not found (agent may already be idle)');
+      }
+      console.log('[command-executor] Stop generation clicked');
+    });
+  }
+
+  /** Click Send now / remove on a composer toolbar queued prompt by item id. */
+  async clickComposerQueueItem(
+    commandId: string,
+    queueItemId: string,
+    mode: 'send' | 'cancel',
+  ): Promise<CommandResult> {
+    return this.withRetry(commandId, async (client) => {
+      const clicked = await client.evaluate(`
+        (() => {
+          const itemId = ${JSON.stringify(queueItemId)};
+          const mode = ${JSON.stringify(mode)};
+          const item = document.querySelector(
+            '.composer-toolbar-queue-item[data-queue-item-id="' + itemId + '"]'
+          );
+          if (!item) return false;
+          const buttons = Array.from(item.querySelectorAll('button')).filter((btn) => {
+            const r = btn.getBoundingClientRect();
+            return r.width >= 4 && r.height >= 4;
+          });
+          const hint = (btn) => (
+            (btn.getAttribute('aria-label') || '') + ' ' +
+            (btn.getAttribute('title') || '') + ' ' +
+            (btn.textContent || '')
+          ).toLowerCase();
+          for (const btn of buttons) {
+            const h = hint(btn);
+            if (mode === 'send' && /(send now|send immediately|force send)/.test(h)) {
+              btn.click();
+              return true;
+            }
+            if (mode === 'cancel' && /(remove|delete|cancel|discard|trash|clear)/.test(h)) {
+              btn.click();
+              return true;
+            }
+          }
+          if (mode === 'send' && buttons[0]) {
+            buttons[0].click();
+            return true;
+          }
+          if (mode === 'cancel' && buttons.length > 0) {
+            buttons[buttons.length - 1].click();
+            return true;
+          }
+          return false;
+        })()
+      `) as boolean;
+      if (!clicked) {
+        throw new Error('Queue item button not found (queue may have changed)');
+      }
+      console.log(`[command-executor] Queue ${mode} clicked for item ${queueItemId.substring(0, 12)}`);
+    });
+  }
+
   async extractToolContent(toolCallId: string): Promise<{ code: string; language?: string; filename?: string } | null> {
     if (!this.client || !this.client.isConnected()) return null;
 

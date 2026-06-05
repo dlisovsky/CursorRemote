@@ -12,6 +12,8 @@ import type {
   RunCommand,
   LoadingIndicator,
   Approval,
+  ApprovalAction,
+  AgentStatus,
   ComposerQueueState,
   Questionnaire,
 } from '../../types.js';
@@ -50,16 +52,81 @@ export function formatActivity(text: string): string {
   return `<i>● ${escapeHtml(text)}…</i>${shimmerSpoiler(true)}`;
 }
 
-/** Forum message body for composer toolbar queue; empty string if no queue. */
-export function formatComposerQueue(queue: ComposerQueueState | undefined): string {
-  if (!queue?.items?.length) return '';
+/** Inline keyboard while the agent is running (compact live feed / activity bubble). */
+export function agentStopKeyboard(): TgKeyboard {
+  return tgKeyboard().text('⏹ Stop', 'stp:').build();
+}
+
+/** When Cursor is working or awaiting approval — show Telegram Stop. */
+export function agentOffersStopControl(
+  agentStatus: AgentStatus,
+  agentActivityLive: boolean,
+): boolean {
+  if (agentActivityLive) return true;
+  return agentStatus === 'thinking'
+    || agentStatus === 'generating'
+    || agentStatus === 'running_tool'
+    || agentStatus === 'waiting_approval';
+}
+
+/** Append ⏹ Stop as its own row under other inline buttons. */
+export function withAgentStopRow(keyboard?: TgKeyboard): TgKeyboard {
+  const stop = agentStopKeyboard();
+  if (!keyboard?.inline_keyboard.length) return stop;
+  return {
+    inline_keyboard: [...keyboard.inline_keyboard, ...stop.inline_keyboard],
+  };
+}
+
+/** Telegram "You:" line for an inbound prompt (with Stop button while agent runs). */
+export function formatInboundPromptStatus(promptText: string): string {
+  const t = promptText.trim();
+  if (!t) return '<b>You:</b> <i>(empty)</i>';
+  const preview = t.length > 900 ? `${t.slice(0, 899)}…` : t;
+  return `<b>You:</b> ${escapeHtml(preview)}`;
+}
+
+/** Clears inline keyboards on edit (Telegram requires an explicit empty keyboard). */
+export function clearInlineKeyboard(): TgKeyboard {
+  return { inline_keyboard: [] };
+}
+
+/** Forum message body + inline actions for composer toolbar queue. */
+export function formatComposerQueue(
+  queue: ComposerQueueState | undefined,
+  hashCallback?: (selectorPath: string) => string,
+): FormattedMessage {
+  if (!queue?.items?.length) return { html: '' };
+
   const hdr = queue.queueLabel?.trim() || 'Queued';
   const lines: string[] = [`<b>${escapeHtml(hdr)}</b>`, ''];
-  for (const it of queue.items) {
+  const multi = queue.items.length > 1;
+  for (let i = 0; i < queue.items.length; i++) {
+    const it = queue.items[i];
     const t = it.text.trim() || '(empty)';
-    lines.push(`▸ ${escapeHtml(t.length > 220 ? `${t.slice(0, 219)}…` : t)}`);
+    const prefix = multi ? `${i + 1}. ` : '';
+    lines.push(`${prefix}▸ ${escapeHtml(t.length > 220 ? `${t.slice(0, 219)}…` : t)}`);
   }
-  return lines.join('\n');
+
+  const kb = tgKeyboard();
+  let hasButtons = false;
+  if (hashCallback) {
+    for (let i = 0; i < queue.items.length; i++) {
+      const it = queue.items[i];
+      const n = multi ? `${i + 1} ` : '';
+      const sendKey = it.sendNowSelectorPath ?? `queue:send:${it.id}`;
+      const cancelKey = it.cancelSelectorPath ?? `queue:cancel:${it.id}`;
+      kb.text(`${n}⚡ Send now`.trim(), `qsf:${hashCallback(sendKey)}`);
+      kb.text(`${n}✕ Cancel`.trim(), `qcn:${hashCallback(cancelKey)}`);
+      hasButtons = true;
+      if (multi) kb.row();
+    }
+  }
+
+  return {
+    html: lines.join('\n'),
+    keyboard: hasButtons ? kb.build() : undefined,
+  };
 }
 
 function formatHuman(msg: HumanMessage): FormattedMessage {
@@ -226,6 +293,26 @@ export function formatLiveFeed(
   return body;
 }
 
+/** Single Telegram panel: live thinking/tools/activity plus streaming assistant reply. */
+export function formatAgentPanel(
+  activityText: string | null,
+  liveElements: ChatElement[],
+  allMessages: ChatElement[],
+  assistantHtml: string | null,
+  hashCallback: (selectorPath: string) => string,
+): string {
+  const header = formatLiveFeed(activityText, liveElements, allMessages, hashCallback);
+  const reply = assistantHtml?.trim() ?? '';
+  if (!header && !reply) return '';
+  if (!header) return reply.length > TG_MSG_LIMIT ? `…\n${reply.slice(-(TG_MSG_LIMIT - 4))}` : reply;
+  if (!reply) return header;
+  let body = `${header}\n\n${reply}`;
+  if (body.length > TG_MSG_LIMIT) {
+    body = `…\n${body.slice(-(TG_MSG_LIMIT - 4))}`;
+  }
+  return body;
+}
+
 function formatThought(msg: ThoughtBlock): FormattedMessage {
   const spoiler = shimmerSpoiler(thoughtAppearsInProgress(msg));
   if (msg.thoughtKind === 'step_summary' && msg.action) {
@@ -314,15 +401,25 @@ function formatRunCommand(
   let keyboard: TgKeyboard | undefined;
   if (msg.actions.length > 0) {
     const kb = tgKeyboard();
-    for (const action of msg.actions) {
+    const idShort = msg.id.substring(0, 8);
+    const run = msg.actions.find(a => a.type === 'run');
+    const skip = msg.actions.find(a => a.type === 'skip');
+    const allow = msg.actions.find(a => a.type === 'allow');
+    const row1 = [run, skip].filter((a): a is NonNullable<typeof a> => !!a);
+    for (const action of row1) {
       const hash = hashCallback(action.selectorPath);
-      const prefix = action.type === 'run' ? 'run' : action.type === 'skip' ? 'skp' : 'alw';
-      const label = action.type === 'run' ? '▶ Run'
-        : action.type === 'skip' ? '⏭ Skip'
-        : `🔓 ${action.label}`;
-      kb.text(label, `${prefix}:${msg.id.substring(0, 8)}:${hash}`);
+      const prefix = action.type === 'run' ? 'run' : 'skp';
+      const label = action.type === 'run' ? '▶ Run' : '⏭ Skip';
+      kb.text(label, `${prefix}:${idShort}:${hash}`);
     }
-    keyboard = kb.build();
+    if (row1.length > 0) kb.row();
+    if (allow) {
+      const hash = hashCallback(allow.selectorPath);
+      kb.text(`🔓 ${truncateBtn(allow.label) || 'Allowlist'}`, `alw:${idShort}:${hash}`);
+      kb.row();
+    }
+    const built = kb.build();
+    keyboard = built.inline_keyboard.length > 0 ? built : undefined;
   }
 
   return { html: lines.join('\n'), keyboard };
@@ -455,9 +552,87 @@ export function formatPlanFull(msg: PlanBlock): string {
   return lines.join('\n');
 }
 
+/** At most one Run, Allowlist, Skip, Accept-all — avoids legacy DOM collecting every button. */
+export function pickApprovalActions(actions: ApprovalAction[]): ApprovalAction[] {
+  const out: ApprovalAction[] = [];
+  const skip = actions.find(a => a.type === 'reject');
+  const run = actions.find(a => a.type === 'approve' && !/allow/i.test(a.label));
+  const allow = actions.find(
+    a => (a.type === 'approve' || a.type === 'approve_all') && /allow/i.test(a.label),
+  );
+  const acceptAll = actions.find(a => a.type === 'approve_all' && !/allow/i.test(a.label));
+  const genericApprove = actions.find(
+    a => a.type === 'approve' && a !== run && a !== allow,
+  );
+  if (skip) out.push(skip);
+  if (run) out.push(run);
+  else if (genericApprove) out.push(genericApprove);
+  if (allow) out.push(allow);
+  else if (acceptAll) out.push(acceptAll);
+  return out;
+}
+
+function approvalCallbackPrefix(action: ApprovalAction): string {
+  if (action.type === 'reject') return 'rej';
+  if (action.type === 'approve_all') return 'all';
+  return 'apr';
+}
+
+function approvalButtonLabel(action: ApprovalAction): string {
+  const raw = action.label.replace(/\s*(Shift\+)?⏎\s*/g, ' ').trim();
+  if (action.type === 'reject') {
+    return raw.toLowerCase().includes('skip') ? '❌ Skip' : `❌ ${truncateBtn(raw)}`;
+  }
+  if (/allow/i.test(raw)) return '🔓 Allowlist';
+  if (action.type === 'approve_all') return `✅ ${truncateBtn(raw) || 'Accept all'}`;
+  if (/^run$/i.test(raw)) return '✅ Run';
+  return `✅ ${truncateBtn(raw) || 'Run'}`;
+}
+
+function truncateBtn(label: string, max = 18): string {
+  if (label.length <= max) return label;
+  return `${label.slice(0, max - 1)}…`;
+}
+
+/** Run + Skip on first row; Allowlist / Accept-all on second (mobile-friendly). */
+export function appendApprovalKeyboard(
+  kb: ReturnType<typeof tgKeyboard>,
+  approvalId: string,
+  actions: ApprovalAction[],
+  hashCallback: (selectorPath: string) => string,
+): void {
+  const picked = pickApprovalActions(actions);
+  const idShort = approvalId.substring(0, 8);
+  const run = picked.find(a => a.type === 'approve' && !/allow/i.test(a.label));
+  const skip = picked.find(a => a.type === 'reject');
+  const allowlist = picked.find(
+    a => (a.type === 'approve' || a.type === 'approve_all') && /allow/i.test(a.label),
+  );
+  const acceptAll = picked.find(a => a.type === 'approve_all' && !/allow/i.test(a.label));
+
+  const row1: ApprovalAction[] = [];
+  if (run) row1.push(run);
+  if (skip) row1.push(skip);
+  for (const action of row1) {
+    const hash = hashCallback(action.selectorPath);
+    kb.text(approvalButtonLabel(action), `${approvalCallbackPrefix(action)}:${idShort}:${hash}`);
+  }
+  if (row1.length > 0) kb.row();
+
+  const row2: ApprovalAction[] = [];
+  if (allowlist) row2.push(allowlist);
+  else if (acceptAll && !row1.includes(acceptAll)) row2.push(acceptAll);
+  for (const action of row2) {
+    const hash = hashCallback(action.selectorPath);
+    kb.text(approvalButtonLabel(action), `${approvalCallbackPrefix(action)}:${idShort}:${hash}`);
+  }
+  if (row2.length > 0) kb.row();
+}
+
 export function formatApprovals(
   approvals: Approval[],
-  hashCallback: (selectorPath: string) => string
+  hashCallback: (selectorPath: string) => string,
+  options?: { includeStop?: boolean },
 ): FormattedMessage {
   if (approvals.length === 0) return { html: '' };
 
@@ -466,18 +641,15 @@ export function formatApprovals(
   const html = `⚠️ <b>Approval needed</b>\n<code>${escapeHtml(summary)}</code>`;
 
   const kb = tgKeyboard();
-  for (const action of approval.actions) {
-    const hash = hashCallback(action.selectorPath);
-    const prefix = action.type === 'approve' ? 'apr'
-      : action.type === 'reject' ? 'rej'
-      : 'all';
-    const label = action.type === 'approve' ? `✅ ${action.label}`
-      : action.type === 'reject' ? `❌ ${action.label}`
-      : `✅ ${action.label}`;
-    kb.text(label, `${prefix}:${approval.id.substring(0, 8)}:${hash}`);
-  }
+  appendApprovalKeyboard(kb, approval.id, approval.actions, hashCallback);
 
-  return { html, keyboard: kb.build() };
+  let keyboard: TgKeyboard | undefined;
+  const built = kb.build();
+  if (built.inline_keyboard.length > 0) keyboard = built;
+  if (options?.includeStop) {
+    keyboard = withAgentStopRow(keyboard);
+  }
+  return { html, keyboard };
 }
 
 export function formatQuestionnaire(

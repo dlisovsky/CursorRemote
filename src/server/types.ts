@@ -35,6 +35,10 @@ export interface RawSignals {
 export interface ComposerQueueItem {
   id: string;
   text: string;
+  /** Cursor "Send now" control for this queued prompt. */
+  sendNowSelectorPath?: string;
+  /** Cursor remove / trash control for this queued prompt. */
+  cancelSelectorPath?: string;
 }
 
 export interface ComposerQueueState {

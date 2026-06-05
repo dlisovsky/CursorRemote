@@ -1,4 +1,4 @@
-const MAX_APPROVAL_CHARS = 280;
+const MAX_APPROVAL_CHARS = 120;
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -26,6 +26,16 @@ export function compactApprovalDescription(description: string): string {
     const pkill = d.match(/pkill[^\n;]+/);
     if (pkill) return truncate(pkill[0], MAX_APPROVAL_CHARS);
     return 'Shell command — open Cursor for full command text';
+  }
+
+  if (/\bpkill\b/.test(d) && /\bnpm run\b/.test(d)) {
+    const npm = d.match(/\bnpm run \S+/);
+    return npm ? truncate(npm[0], MAX_APPROVAL_CHARS) : 'Shell: restart dev server';
+  }
+  if (/\bpkill\b|;\s*sleep\s+\d|2>\/dev\/null/.test(d)) {
+    const npm = d.match(/\bnpm run \S+/);
+    if (npm) return truncate(npm[0], MAX_APPROVAL_CHARS);
+    return 'Shell command — open Cursor for full text';
   }
 
   return truncate(d, MAX_APPROVAL_CHARS);

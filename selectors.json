@@ -55,6 +55,15 @@
       ".composer-bar button[aria-label*='image']"
     ]
   },
+  "stopGeneration": {
+    "strategies": [
+      "button[aria-label='Stop generation']",
+      "button[aria-label*='Stop generation']",
+      ".composer-bar button[aria-label*='Stop']",
+      "#workbench\\.parts\\.auxiliarybar button[aria-label*='Stop']"
+    ],
+    "textMatch": ["Stop generation", "Stop"]
+  },
   "agentStatus": {
     "strategies": [
       "span.auxiliary-bar-chat-title",

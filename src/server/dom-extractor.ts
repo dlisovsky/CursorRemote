@@ -1292,20 +1292,53 @@ export function extractionFunction(
 
       if (approveButtons.length > 0 || rejectButtons.length > 0) {
         const actions: CursorState['pendingApprovals'][0]['actions'] = [];
-        for (const btn of approveButtons) {
+        const runLike = approveButtons.find(b => /^run$/i.test(b.label.trim()));
+        const allowLike = approveButtons.find(b => /allow/i.test(b.label));
+        const acceptAllLike = approveButtons.find(b => /accept all|approve all/i.test(b.label));
+        const firstApprove = approveButtons[0];
+        if (runLike) {
           actions.push({
-            label: btn.label,
-            type: btn.label.toLowerCase().includes('all') ? 'approve_all' : 'approve',
-            selectorPath: btn.selector,
+            label: runLike.label,
+            type: 'approve',
+            selectorPath: runLike.selector,
+          });
+        } else if (firstApprove) {
+          actions.push({
+            label: firstApprove.label,
+            type: firstApprove.label.toLowerCase().includes('all') ? 'approve_all' : 'approve',
+            selectorPath: firstApprove.selector,
           });
         }
-        for (const btn of rejectButtons) {
-          actions.push({ label: btn.label, type: 'reject', selectorPath: btn.selector });
+        if (allowLike && allowLike !== runLike && allowLike !== firstApprove) {
+          actions.push({
+            label: allowLike.label,
+            type: 'approve',
+            selectorPath: allowLike.selector,
+          });
+        } else if (acceptAllLike && acceptAllLike !== firstApprove) {
+          actions.push({
+            label: acceptAllLike.label,
+            type: 'approve_all',
+            selectorPath: acceptAllLike.selector,
+          });
         }
-        const idParts = approveButtons.map(b => b.label).join(',') + '|' + rejectButtons.map(b => b.label).join(',');
+        if (rejectButtons[0]) {
+          actions.push({
+            label: rejectButtons[0].label,
+            type: 'reject',
+            selectorPath: rejectButtons[0].selector,
+          });
+        }
+        const cmdEl = container.querySelector('.ui-shell-tool-call__command');
+        const cmdText = (cmdEl?.textContent || '')
+          .trim()
+          .replace(/^\$\s*/, '')
+          .replace(/\s+/g, ' ')
+          .substring(0, 240);
+        const description = cmdText || firstApprove?.label || 'Pending approval';
         pendingApprovals.push({
-          id: idParts,
-          description: approveButtons[0]?.label || 'Pending approval',
+          id: `legacy:${description.substring(0, 40)}`,
+          description,
           actions,
         });
       }
@@ -1608,7 +1641,46 @@ export function extractionFunction(
           const ro = item.querySelector('.aislash-editor-input-readonly');
           qtext = (ro?.textContent || '').trim();
         }
-        if (qid || qtext) queueItems.push({ id: qid || `qi-${queueItems.length}`, text: qtext });
+        const buttons = Array.from(item.querySelectorAll('button')).filter((btn) => {
+          const r = btn.getBoundingClientRect();
+          return r.width >= 4 && r.height >= 4;
+        });
+        let sendNowSelectorPath: string | undefined;
+        let cancelSelectorPath: string | undefined;
+        for (const btn of buttons) {
+          const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+          const title = (btn.getAttribute('title') || '').toLowerCase();
+          const hint = `${aria} ${title}`;
+          const path = buildSelectorPath(btn);
+          if (
+            !sendNowSelectorPath &&
+            (/(send now|send immediately|force send)/i.test(hint) ||
+              aria === 'send' ||
+              (aria.includes('send') && !aria.includes('queue')))
+          ) {
+            sendNowSelectorPath = path;
+          }
+          if (
+            !cancelSelectorPath &&
+            /(remove|delete|cancel|discard|trash|clear)/i.test(hint)
+          ) {
+            cancelSelectorPath = path;
+          }
+        }
+        if (buttons.length >= 2) {
+          if (!sendNowSelectorPath) sendNowSelectorPath = buildSelectorPath(buttons[0]);
+          if (!cancelSelectorPath) cancelSelectorPath = buildSelectorPath(buttons[buttons.length - 1]);
+        } else if (buttons.length === 1 && !cancelSelectorPath) {
+          cancelSelectorPath = buildSelectorPath(buttons[0]);
+        }
+        if (qid || qtext) {
+          queueItems.push({
+            id: qid || `qi-${queueItems.length}`,
+            text: qtext,
+            ...(sendNowSelectorPath ? { sendNowSelectorPath } : {}),
+            ...(cancelSelectorPath ? { cancelSelectorPath } : {}),
+          });
+        }
       }
     }
 

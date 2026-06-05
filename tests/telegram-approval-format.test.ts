@@ -13,6 +13,13 @@ describe('compactApprovalDescription', () => {
 
   it('truncates long plain descriptions', () => {
     const out = compactApprovalDescription('x'.repeat(400));
-    assert.ok(out.length <= 280);
+    assert.ok(out.length <= 120);
+  });
+
+  it('shortens bare pkill plus npm run dev', () => {
+    const out = compactApprovalDescription(
+      'pkill -f "tsx watch.*src/server/index.ts" 2>/dev/null; sleep 1; cd /repo && npm run dev',
+    );
+    assert.equal(out, 'npm run dev');
   });
 });

@@ -102,6 +102,15 @@ function getDefaultSelectors(): SelectorConfig {
         "textarea",
       ],
     },
+    stopGeneration: {
+      strategies: [
+        "button[aria-label='Stop generation']",
+        "button[aria-label*='Stop generation']",
+        ".composer-bar button[aria-label*='Stop']",
+        "#workbench\\.parts\\.auxiliarybar button[aria-label*='Stop']",
+      ],
+      textMatch: ['Stop generation', 'Stop'],
+    },
     agentStatus: {
       strategies: [
         "[class*='status']",

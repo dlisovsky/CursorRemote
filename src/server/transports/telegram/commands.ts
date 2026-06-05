@@ -4,7 +4,14 @@ import type { CDPBridge } from '../../cdp-bridge.js';
 import type { TopicManager } from './topic-manager.js';
 import type { MessageTracker } from '../message-tracker.js';
 import type { WindowMonitor } from '../../window-monitor.js';
-import { escapeHtml, formatElement, formatPlanFull, mergeFormattedBlocks, splitMessage } from './formatter.js';
+import {
+  escapeHtml,
+  formatElement,
+  formatInboundPromptStatus,
+  formatPlanFull,
+  mergeFormattedBlocks,
+  splitMessage,
+} from './formatter.js';
 import type { PlanBlock, TranscribeConfig } from '../../types.js';
 import { stat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
@@ -56,6 +63,13 @@ export interface CommandDeps {
   setSyncEnabled: (enabled: boolean, chatId?: number) => void;
   setChatId: (id: number) => void;
   resetAllState: () => void;
+  /** Show/update the per-topic prompt status bubble with Stop (optional reuse message id). */
+  upsertPromptStatusMessage: (
+    threadId: number,
+    html: string,
+    reuseMessageId?: number
+  ) => Promise<void>;
+  clearPromptStatusMessage: (threadId: number) => Promise<void>;
 }
 
 export interface RegisterDeps {
@@ -707,7 +721,19 @@ async function doPurgeInBackground(api: TelegramApiClient, chatId: number, deps:
 
 // --- /status ---
 
-export async function handleStatus(ctx: BotContext, deps: CommandDeps): Promise<void> {
+export interface StatusHtmlOptions {
+  /** HTML heading line (default: Status). */
+  heading?: string;
+  version?: string;
+  /** Extra footer line (HTML-escaped unless it contains markup you control). */
+  footer?: string;
+}
+
+/** Same fields as /status — usable for General-topic startup notices. */
+export function formatStatusHtml(
+  deps: Pick<CommandDeps, 'stateManager' | 'topicManager' | 'getSyncEnabled' | 'chatId'>,
+  options: StatusHtmlOptions = {},
+): string {
   const state = deps.stateManager.getCurrentState();
   const activeWin = state.windows.find(w => w.id === state.activeWindowId);
   const activeTab = state.chatTabs.find(t => t.isActive);
@@ -715,8 +741,9 @@ export async function handleStatus(ctx: BotContext, deps: CommandDeps): Promise<
   const groupId = deps.chatId;
 
   const lines = [
-    '<b>Status</b>',
+    options.heading ?? '<b>Status</b>',
     '',
+    ...(options.version ? [`Version: ${escapeHtml(options.version)}`] : []),
     `Sync: ${syncOn ? '✅ On' : '❌ Off'}`,
     `Group: ${groupId ? String(groupId) : 'Not set (run /sync)'}`,
     `Connection: ${state.connected ? '✅ Connected' : '❌ Disconnected'}`,
@@ -729,7 +756,14 @@ export async function handleStatus(ctx: BotContext, deps: CommandDeps): Promise<
     `Topics: ${deps.topicManager.getAllMappings().length}`,
     `Approvals: ${state.pendingApprovals.length}`,
   ];
-  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+  if (options.footer) {
+    lines.push('', options.footer);
+  }
+  return lines.join('\n');
+}
+
+export async function handleStatus(ctx: BotContext, deps: CommandDeps): Promise<void> {
+  await ctx.reply(formatStatusHtml(deps), { parse_mode: 'HTML' });
 }
 
 // --- /history ---
@@ -1061,6 +1095,15 @@ export const ACTION_SELECTORS: Record<string, string[]> = {
   skp: ['button.ui-shell-tool-call__skip-btn', '.composer-skip-button'],
   alw: ['button.ui-shell-tool-call__allowlist-button', '.composer-tool-call-status-row .anysphere-secondary-button.composer-run-button'],
   bld: ['.composer-create-plan-build-button'],
+  qsf: [
+    '.composer-toolbar-queue-item button[aria-label*="Send now"]',
+    '.composer-toolbar-queue-item button[aria-label*="Send Now"]',
+  ],
+  qcn: [
+    '.composer-toolbar-queue-item button[aria-label*="Remove"]',
+    '.composer-toolbar-queue-item button[aria-label*="Delete"]',
+    '.composer-toolbar-queue-item button[aria-label*="Discard"]',
+  ],
 };
 
 export function resolveStableActionSelector(action: string): string | undefined {
@@ -1096,9 +1139,14 @@ export function parseCallbackData(data: string): { action: string; id: string; h
     return { action, id: rest, hash: '' };
   }
 
-  // Questionnaire actions carry only a hash: `qan:<hash>`.
-  if (action === 'qan' || action === 'qsk' || action === 'qco') {
+  // Questionnaire / queue actions carry only a hash: `qan:<hash>`, `qsf:<hash>`, …
+  if (action === 'qan' || action === 'qsk' || action === 'qco' || action === 'qsf' || action === 'qcn') {
     return { action, id: '', hash: rest };
+  }
+
+  // Stop agent generation (`stp:`).
+  if (action === 'stp') {
+    return { action, id: '', hash: '' };
   }
 
   // Default (mode, model, …): the entire rest is the id, colons allowed.
@@ -1116,6 +1164,55 @@ export async function handleCallbackQuery(ctx: BotContext, deps: CommandDeps): P
   const commandId = genId();
 
   try {
+    if (action === 'stp') {
+      if (!(await ensureTopicWindow(ctx, deps))) {
+        await ctx.answerCallbackQuery({ text: 'Failed to switch window' });
+        return;
+      }
+      const result = await deps.commandExecutor.stopGeneration(commandId);
+      await ctx.answerCallbackQuery({
+        text: result.ok ? 'Stopping agent…' : `Error: ${result.error}`,
+      });
+      return;
+    }
+
+    if (action === 'qsf' || action === 'qcn') {
+      if (!(await ensureTopicWindow(ctx, deps))) {
+        await ctx.answerCallbackQuery({ text: 'Failed to switch window' });
+        return;
+      }
+      const fromHash = deps.messageTracker.resolveHash(hash);
+      const stableFallback = resolveStableActionSelector(action);
+      const selectorPath = fromHash ?? stableFallback;
+      let result;
+      if (selectorPath?.startsWith('queue:send:')) {
+        result = await deps.commandExecutor.clickComposerQueueItem(
+          commandId,
+          selectorPath.slice('queue:send:'.length),
+          'send',
+        );
+      } else if (selectorPath?.startsWith('queue:cancel:')) {
+        result = await deps.commandExecutor.clickComposerQueueItem(
+          commandId,
+          selectorPath.slice('queue:cancel:'.length),
+          'cancel',
+        );
+      } else if (selectorPath) {
+        result = await deps.commandExecutor.clickAction(commandId, selectorPath);
+      } else {
+        await ctx.answerCallbackQuery({
+          text: 'Queue item gone or server restarted — check Cursor.',
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery({
+        text: result.ok
+          ? (action === 'qsf' ? 'Sending now…' : 'Removed from queue')
+          : `Error: ${result.error}`,
+      });
+      return;
+    }
+
     if (action === 'mode') {
       if (!(await ensureTopicWindow(ctx, deps))) {
         await ctx.answerCallbackQuery({ text: 'Failed to switch window' });
@@ -1279,12 +1376,19 @@ export async function sendPromptToMappedAgent(
   ctx: BotContext,
   deps: CommandDeps,
   text: string,
-  imagePaths: string[] = []
+  imagePaths: string[] = [],
+  opts?: { reusePromptStatusMessageId?: number }
 ): Promise<boolean> {
   const threadId = ctx.message?.message_thread_id;
   if (!threadId) return false;
 
   recordTelegramInboundPrompt(threadId, text);
+
+  await deps.upsertPromptStatusMessage(
+    threadId,
+    '<i>⏳ Sending to Cursor…</i>',
+    opts?.reusePromptStatusMessageId
+  );
 
   const mapping = deps.topicManager.resolveThread(threadId);
   if (!mapping) {
@@ -1342,9 +1446,15 @@ export async function sendPromptToMappedAgent(
 
   const result = await deps.commandExecutor.sendPrompt(commandId, { text, imagePaths });
   if (!result.ok) {
+    await deps.clearPromptStatusMessage(threadId);
     await ctx.reply(`⚠️ Failed to send: ${result.error}`);
     return false;
   }
+  await deps.upsertPromptStatusMessage(
+    threadId,
+    formatInboundPromptStatus(text),
+    opts?.reusePromptStatusMessageId
+  );
   return true;
 }
 
@@ -1442,17 +1552,12 @@ export async function processInboundPhotos(
       answerCallbackQuery: async () => {},
     };
 
-    const sent = await sendPromptToMappedAgent(pseudoCtx, deps, promptText, paths);
+    const sent = await sendPromptToMappedAgent(pseudoCtx, deps, promptText, paths, {
+      reusePromptStatusMessageId: status.message_id,
+    });
     if (!sent) {
       throw new Error('Failed to send photos to Cursor');
     }
-
-    await deps.api.editMessageText(
-      chatId,
-      status.message_id,
-      `✅ <b>Sent to Cursor</b> (${countLabel})${promptText ? `\n${escapeHtml(preview)}` : ''}`,
-      { message_thread_id: threadId, parse_mode: 'HTML' }
-    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[telegram-photo] Failed: ${msg}`);
@@ -1584,17 +1689,19 @@ export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Pr
 
     const prompt = promptFromTelegramMessage(result.text, ctx.message);
     const preview = prompt.length > 500 ? `${prompt.slice(0, 500)}…` : prompt;
-    const sent = await sendPromptToMappedAgent(ctx, deps, prompt);
+    const sent = await sendPromptToMappedAgent(ctx, deps, prompt, [], {
+      reusePromptStatusMessageId: statusMsg.message_id,
+    });
 
-    const statusBody = sent
-      ? `✅ <b>Sent to Cursor</b> (${escapeHtml(result.language)})\n${escapeHtml(preview.length > 900 ? `${preview.slice(0, 899)}…` : preview)}`
-      : `⚠️ <b>Failed to send</b>\n${escapeHtml(preview.length > 400 ? `${preview.slice(0, 399)}…` : preview)}`;
-    await deps.api.editMessageText(
-      chatId,
-      statusMsg.message_id,
-      statusBody,
-      { message_thread_id: threadId, parse_mode: 'HTML' }
-    );
+    if (!sent) {
+      const statusBody = `⚠️ <b>Failed to send</b>\n${escapeHtml(preview.length > 400 ? `${preview.slice(0, 399)}…` : preview)}`;
+      await deps.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        statusBody,
+        { message_thread_id: threadId, parse_mode: 'HTML' }
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[telegram-voice] Failed: ${msg}`);

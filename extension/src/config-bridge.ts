@@ -1,8 +1,14 @@
 import * as vscode from 'vscode';
 
+export interface BuildEnvOptions {
+  /** Set when the extension restarted the server (CMD+Shift+P → Restart Server). */
+  announceRestart?: boolean;
+}
+
 export function buildEnvFromConfig(
   context: vscode.ExtensionContext,
-  licenseKey: string | undefined
+  licenseKey: string | undefined,
+  options: BuildEnvOptions = {},
 ): Record<string, string> {
   const config = vscode.workspace.getConfiguration('cursorRemote');
   return {
@@ -28,5 +34,6 @@ export function buildEnvFromConfig(
     LICENSE_KEY: licenseKey ?? '',
     DATA_DIR: context.globalStorageUri.fsPath,
     LOG_FORMAT: 'json',
+    ...(options.announceRestart ? { CURSOR_REMOTE_ANNOUNCE_RESTART: '1' } : {}),
   };
 }

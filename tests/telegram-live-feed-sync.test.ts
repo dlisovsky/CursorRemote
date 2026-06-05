@@ -55,6 +55,11 @@ describe('shouldSkipMessageForCompactLive', () => {
     assert.equal(shouldSkipMessageForCompactLive(false, done, false, 1), true);
   });
 
+  it('skips completed tools in compact mode even when showTools is on', () => {
+    const done: ChatElement = { ...loadingTool, status: 'completed', filename: 'foo.ts' };
+    assert.equal(shouldSkipMessageForCompactLive(true, done, true, 1), true);
+  });
+
   it('skips thoughts always', () => {
     const thought: ChatElement = {
       type: 'thought',
