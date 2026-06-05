@@ -6,9 +6,12 @@ import type { MessageTracker } from '../message-tracker.js';
 import type { WindowMonitor } from '../../window-monitor.js';
 import { escapeHtml, formatElement, formatPlanFull, mergeFormattedBlocks, splitMessage } from './formatter.js';
 import type { PlanBlock, TranscribeConfig } from '../../types.js';
+import { stat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
 import { downloadVoiceFile } from './voice-download.js';
+import { downloadTelegramFile } from './file-download.js';
 import { transcribeVoiceFile } from './voice-transcribe.js';
+import type { PhotoAlbumItem } from './photo-album-collector.js';
 import { cleanTabTitle } from '../../dom-extractor.js';
 import { normalizeWindowTitle } from './topic-manager.js';
 import { tgKeyboard, type BotContext, type TelegramApiClient } from './tg-types.js';
@@ -24,6 +27,9 @@ export interface CommandDeps {
   chatId: number | undefined;
   botToken: string;
   voiceEnabled: boolean;
+  photosEnabled: boolean;
+  photoMaxCount: number;
+  photoMaxBytes: number;
   transcribe: TranscribeConfig;
   dataDir: string;
   getSyncEnabled: () => boolean;
@@ -1249,14 +1255,19 @@ export async function handleCallbackQuery(ctx: BotContext, deps: CommandDeps): P
 
 // --- Text / voice messages ---
 
-export async function sendPromptToMappedAgent(ctx: BotContext, deps: CommandDeps, text: string): Promise<void> {
+export async function sendPromptToMappedAgent(
+  ctx: BotContext,
+  deps: CommandDeps,
+  text: string,
+  imagePaths: string[] = []
+): Promise<boolean> {
   const threadId = ctx.message?.message_thread_id;
-  if (!threadId) return;
+  if (!threadId) return false;
 
   const mapping = deps.topicManager.resolveThread(threadId);
   if (!mapping) {
     await ctx.reply('⚠️ This topic is not mapped. Run /sync to set up.');
-    return;
+    return false;
   }
 
   let state = deps.stateManager.getCurrentState();
@@ -1281,7 +1292,7 @@ export async function sendPromptToMappedAgent(ctx: BotContext, deps: CommandDeps
 
     if (!targetWin) {
       await ctx.reply(`⚠️ Window "${mapping.windowTitle}" not found. Open: ${state.windows.map(w => w.title).join(', ') || 'none'}`);
-      return;
+      return false;
     }
 
     try {
@@ -1290,7 +1301,7 @@ export async function sendPromptToMappedAgent(ctx: BotContext, deps: CommandDeps
       await sleep(1500);
     } catch (err) {
       await ctx.reply(`⚠️ Failed to switch window: ${err instanceof Error ? err.message : err}`);
-      return;
+      return false;
     }
   } else {
     deps.windowMonitor.setHomeWindow(state.activeWindowId);
@@ -1302,13 +1313,187 @@ export async function sendPromptToMappedAgent(ctx: BotContext, deps: CommandDeps
     const tabResult = await deps.commandExecutor.switchTab(commandId, mapping.tabTitle);
     if (!tabResult.ok) {
       await ctx.reply(`⚠️ Failed to switch tab: ${tabResult.error}`);
-      return;
+      return false;
     }
     await sleep(500);
   }
 
-  const result = await deps.commandExecutor.sendMessage(commandId, text);
-  if (!result.ok) await ctx.reply(`⚠️ Failed to send: ${result.error}`);
+  const result = await deps.commandExecutor.sendPrompt(commandId, { text, imagePaths });
+  if (!result.ok) {
+    await ctx.reply(`⚠️ Failed to send: ${result.error}`);
+    return false;
+  }
+  return true;
+}
+
+function largestPhotoFileId(photos: { file_id: string }[]): string {
+  return photos[photos.length - 1].file_id;
+}
+
+function isImageDocument(doc: { mime_type?: string; file_name?: string }): boolean {
+  const mime = doc.mime_type?.toLowerCase() ?? '';
+  if (mime.startsWith('image/')) return true;
+  const name = doc.file_name?.toLowerCase() ?? '';
+  return /\.(png|jpe?g|webp|gif|heic|heif)$/.test(name);
+}
+
+/** Process one or more Telegram photos (after album batching). */
+export async function processInboundPhotos(
+  deps: CommandDeps,
+  target: { chatId: number; threadId: number },
+  item: PhotoAlbumItem
+): Promise<void> {
+  const { threadId, chatId } = target;
+  const mapping = deps.topicManager.resolveThread(threadId);
+  if (!mapping) {
+    await deps.api.sendMessage(chatId, '⚠️ This topic is not mapped. Run /sync to set up.', {
+      message_thread_id: threadId,
+    });
+    return;
+  }
+
+  if (!deps.photosEnabled) {
+    await deps.api.sendMessage(chatId, 'Photo messages disabled', { message_thread_id: threadId });
+    return;
+  }
+
+  const fileIds = item.fileIds.slice(0, deps.photoMaxCount);
+  if (item.fileIds.length > deps.photoMaxCount) {
+    await deps.api.sendMessage(
+      chatId,
+      `⚠️ Only the first ${deps.photoMaxCount} photos were used (album limit).`,
+      { message_thread_id: threadId }
+    );
+  }
+
+  const statusLabel = fileIds.length > 1 ? '⏳ Processing photos…' : '⏳ Processing photo…';
+  const status = await deps.api.sendMessage(chatId, statusLabel, {
+    message_thread_id: threadId,
+  });
+
+  const paths: string[] = [];
+  try {
+    for (const fileId of fileIds) {
+      const path = await downloadTelegramFile(
+        deps.api,
+        deps.botToken,
+        fileId,
+        deps.dataDir,
+        'image-cache',
+        'jpg'
+      );
+      const info = await stat(path);
+      if (info.size > deps.photoMaxBytes) {
+        throw new Error(
+          `Image too large (${Math.round(info.size / 1024 / 1024)}MB, max ${Math.round(deps.photoMaxBytes / 1024 / 1024)}MB)`
+        );
+      }
+      paths.push(path);
+      console.log(`[telegram-photo] Downloaded ${path} (${info.size} bytes)`);
+    }
+
+    const caption = item.caption?.trim() ?? '';
+    const preview = caption.length > 280 ? `${caption.slice(0, 279)}…` : caption;
+    const countLabel = paths.length === 1 ? '1 image' : `${paths.length} images`;
+    await deps.api.editMessageText(
+      chatId,
+      status.message_id,
+      caption
+        ? `📷 <b>${countLabel}</b>\n${escapeHtml(preview)}`
+        : `📷 <b>${countLabel}</b> (no caption)`,
+      { message_thread_id: threadId, parse_mode: 'HTML' }
+    );
+
+    const pseudoCtx: BotContext = {
+      chat: { id: chatId, type: 'supergroup' },
+      message: { message_thread_id: threadId },
+      reply: (text, options) =>
+        deps.api.sendMessage(chatId, text, {
+          message_thread_id: options?.message_thread_id ?? threadId,
+          parse_mode: options?.parse_mode,
+        }),
+      editMessageText: async () => {},
+      answerCallbackQuery: async () => {},
+    };
+
+    const sent = await sendPromptToMappedAgent(pseudoCtx, deps, caption, paths);
+    if (!sent) {
+      throw new Error('Failed to send photos to Cursor');
+    }
+
+    await deps.api.editMessageText(
+      chatId,
+      status.message_id,
+      `✅ <b>Sent to Cursor</b> (${countLabel})${caption ? `\n${escapeHtml(preview)}` : ''}`,
+      { message_thread_id: threadId, parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[telegram-photo] Failed: ${msg}`);
+    try {
+      await deps.api.editMessageText(
+        chatId,
+        status.message_id,
+        `⚠️ ${escapeHtml(msg)}`,
+        { message_thread_id: threadId, parse_mode: 'HTML' }
+      );
+    } catch {
+      await deps.api.sendMessage(chatId, `⚠️ ${msg}`, { message_thread_id: threadId });
+    }
+  } finally {
+    for (const p of paths) {
+      unlink(p).catch(() => {});
+    }
+  }
+}
+
+export async function handlePhotoMessage(
+  ctx: BotContext,
+  deps: CommandDeps,
+  albumCollector: { add: (chatId: number, threadId: number, mediaGroupId: string, fileId: string, caption?: string) => void }
+): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  const photos = ctx.message?.photo;
+  const chatId = ctx.chat?.id;
+  if (!threadId || !photos?.length || !chatId) return;
+
+  const fileId = largestPhotoFileId(photos);
+  const caption = ctx.message?.caption;
+  const mediaGroupId = ctx.message?.media_group_id;
+
+  if (mediaGroupId) {
+    albumCollector.add(chatId, threadId, mediaGroupId, fileId, caption);
+    return;
+  }
+
+  await processInboundPhotos(deps, { chatId, threadId }, {
+    fileIds: [fileId],
+    caption,
+  });
+}
+
+export async function handleImageDocumentMessage(
+  ctx: BotContext,
+  deps: CommandDeps,
+  albumCollector: { add: (chatId: number, threadId: number, mediaGroupId: string, fileId: string, caption?: string) => void }
+): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  const doc = ctx.message?.document;
+  const chatId = ctx.chat?.id;
+  if (!threadId || !doc || !chatId || !isImageDocument(doc)) return;
+
+  const caption = ctx.message?.caption;
+  const mediaGroupId = ctx.message?.media_group_id;
+
+  if (mediaGroupId) {
+    albumCollector.add(chatId, threadId, mediaGroupId, doc.file_id, caption);
+    return;
+  }
+
+  await processInboundPhotos(deps, { chatId, threadId }, {
+    fileIds: [doc.file_id],
+    caption,
+  });
 }
 
 export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {

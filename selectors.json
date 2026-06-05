@@ -39,6 +39,22 @@
       "textarea"
     ]
   },
+  "composerFileInput": {
+    "strategies": [
+      ".composer-bar input[type=file]",
+      "#workbench\\.parts\\.auxiliarybar input[type=file]",
+      "input[type=file][accept*='image']",
+      "input[type=file]"
+    ]
+  },
+  "composerAttachButton": {
+    "strategies": [
+      "button[aria-label*='Attach']",
+      "button[aria-label*='attach']",
+      ".composer-bar button[aria-label*='Image']",
+      ".composer-bar button[aria-label*='image']"
+    ]
+  },
   "agentStatus": {
     "strategies": [
       "span.auxiliary-bar-chat-title",

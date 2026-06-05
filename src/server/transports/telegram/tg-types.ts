@@ -29,13 +29,30 @@ export function tgKeyboard(): TgKeyboardBuilder {
   return new TgKeyboardBuilder();
 }
 
+export interface TgPhotoSize {
+  file_id: string;
+  width: number;
+  height: number;
+}
+
+export interface TgDocument {
+  file_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface BotContext {
   from?: { id: number; username?: string; first_name?: string };
   chat?: { id: number; type: string; is_forum?: boolean };
   message?: {
     text?: string;
+    caption?: string;
     message_thread_id?: number;
+    media_group_id?: string;
     voice?: { file_id: string; duration: number };
+    photo?: TgPhotoSize[];
+    document?: TgDocument;
   };
   callbackQuery?: {
     data?: string;
@@ -51,6 +68,7 @@ export interface BotContext {
   editMessageText(text: string, options?: {
     parse_mode?: string;
     reply_markup?: TgKeyboard;
+    message_thread_id?: number;
   }): Promise<void>;
   answerCallbackQuery(options?: { text?: string }): Promise<void>;
 }
@@ -64,6 +82,7 @@ export interface TelegramApiClient {
   editMessageText(chatId: number, messageId: number, text: string, options?: {
     parse_mode?: string;
     reply_markup?: TgKeyboard;
+    message_thread_id?: number;
   }): Promise<void>;
   deleteMessage(chatId: number, messageId: number): Promise<boolean>;
   sendChatAction(chatId: number, action: string, options?: {

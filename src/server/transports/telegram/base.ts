@@ -44,7 +44,9 @@ import {
   handleCallbackQuery,
   handleTextMessage,
   handleRegister,
+  processInboundPhotos,
 } from './commands.js';
+import { PhotoAlbumCollector } from './photo-album-collector.js';
 
 const TYPING_INTERVAL_MS = 4000;
 const MAX_INITIAL_MESSAGES = 5;
@@ -131,6 +133,12 @@ export abstract class BaseTelegramTransport implements Transport {
    *  duplicate banners — confirmed in production at msgId 10352+10353 for one
    *  approval. Skip if another invocation is already sending this trackId. */
   private approvalInflight = new Set<string>();
+  private photoAlbumCollector = new PhotoAlbumCollector((flush) => {
+    const deps = this.buildCommandDeps();
+    void processInboundPhotos(deps, { chatId: flush.chatId, threadId: flush.threadId }, flush.item).catch(err => {
+      console.error('[telegram-photo] Album processing error:', err instanceof Error ? err.message : err);
+    });
+  });
   private activityMsgIds = new Map<number, number>();
   private lastActivityText = new Map<number, string>();
   private activityTimestamps = new Map<number, number>();
@@ -293,6 +301,7 @@ export abstract class BaseTelegramTransport implements Transport {
   protected onStop(): void {
     this.started = false;
     this.detachListeners();
+    this.photoAlbumCollector.dispose();
     if (this.activityStaleTimer) { clearInterval(this.activityStaleTimer); this.activityStaleTimer = null; }
     this.deleteAllLiveFeedMessages();
     this.deleteAllActivityMessages();
@@ -315,6 +324,9 @@ export abstract class BaseTelegramTransport implements Transport {
       get chatId() { return self.groupId; },
       botToken: this.config.botToken,
       voiceEnabled: this.config.voiceEnabled,
+      photosEnabled: this.config.photosEnabled,
+      photoMaxCount: this.config.photoMaxCount,
+      photoMaxBytes: this.config.photoMaxBytes,
       transcribe: this.transcribeConfig,
       dataDir: this.serverDataDir,
       getSyncEnabled: () => this.syncEnabled,
@@ -405,6 +417,10 @@ export abstract class BaseTelegramTransport implements Transport {
     } catch (err) {
       console.warn('[telegram] Failed to save auth:', err instanceof Error ? err.message : err);
     }
+  }
+
+  protected getPhotoAlbumCollector(): PhotoAlbumCollector {
+    return this.photoAlbumCollector;
   }
 
   resetAllState(): void {

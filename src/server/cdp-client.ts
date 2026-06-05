@@ -257,6 +257,46 @@ export class CdpClient extends EventEmitter {
   }
 
   /**
+   * Set local file paths on a file input via DOM.setFileInputFiles.
+   * Paths must be absolute on the machine running Cursor.
+   */
+  async setFileInputFiles(
+    selectors: string[],
+    filePaths: string[]
+  ): Promise<{ ok: boolean; selector?: string; error?: string }> {
+    if (filePaths.length === 0) {
+      return { ok: false, error: 'No files to attach' };
+    }
+
+    await this.send('DOM.enable', {}).catch(() => {});
+    const doc = await this.send('DOM.getDocument', {}) as { root?: { nodeId: number } };
+    const rootId = doc.root?.nodeId;
+    if (!rootId) {
+      return { ok: false, error: 'DOM.getDocument failed' };
+    }
+
+    for (const selector of selectors) {
+      try {
+        const query = await this.send('DOM.querySelector', {
+          nodeId: rootId,
+          selector,
+        }) as { nodeId?: number };
+        if (!query.nodeId) continue;
+
+        await this.send('DOM.setFileInputFiles', {
+          nodeId: query.nodeId,
+          files: filePaths,
+        });
+        return { ok: true, selector };
+      } catch {
+        continue;
+      }
+    }
+
+    return { ok: false, error: 'No matching file input in DOM' };
+  }
+
+  /**
    * Check if an element exists in the page.
    */
   async exists(selector: string): Promise<boolean> {

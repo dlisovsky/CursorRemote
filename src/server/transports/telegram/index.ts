@@ -13,6 +13,8 @@ import {
   handleCallbackQuery,
   handleTextMessage,
   handleVoiceMessage,
+  handlePhotoMessage,
+  handleImageDocumentMessage,
 } from './commands.js';
 
 function grammyApiAdapter(bot: Bot): TelegramApiClient {
@@ -51,10 +53,23 @@ function grammyCtxToBotCtx(ctx: import('grammy').Context): BotContext {
     chat: chat ? { id: chat.id, type: chat.type, is_forum: (chat as unknown as Record<string, unknown>).is_forum as boolean | undefined } : undefined,
     message: ctx.message ? {
       text: ctx.message.text,
+      caption: ctx.message.caption,
       message_thread_id: ctx.message.message_thread_id,
+      media_group_id: ctx.message.media_group_id,
       voice: ctx.message.voice ? {
         file_id: ctx.message.voice.file_id,
         duration: ctx.message.voice.duration,
+      } : undefined,
+      photo: ctx.message.photo?.map(p => ({
+        file_id: p.file_id,
+        width: p.width,
+        height: p.height,
+      })),
+      document: ctx.message.document ? {
+        file_id: ctx.message.document.file_id,
+        file_name: ctx.message.document.file_name,
+        mime_type: ctx.message.document.mime_type,
+        file_size: ctx.message.document.file_size,
       } : undefined,
     } : undefined,
     callbackQuery: ctx.callbackQuery ? {
@@ -202,6 +217,14 @@ export class TelegramTransport extends BaseTelegramTransport {
 
     this.bot.on('message:voice', (ctx) =>
       handleVoiceMessage(grammyCtxToBotCtx(ctx), deps)
+    );
+
+    const albumCollector = this.getPhotoAlbumCollector();
+    this.bot.on('message:photo', (ctx) =>
+      handlePhotoMessage(grammyCtxToBotCtx(ctx), deps, albumCollector)
+    );
+    this.bot.on('message:document', (ctx) =>
+      handleImageDocumentMessage(grammyCtxToBotCtx(ctx), deps, albumCollector)
     );
 
     this.bot.catch((err) => {

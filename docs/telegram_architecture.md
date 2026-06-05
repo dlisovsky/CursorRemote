@@ -157,6 +157,12 @@ The main class that implements the `Transport` interface.
 - `handleVoiceMessage` downloads OGG via Bot API → `transcribeVoiceFile` spawns `scripts/transcribe-voice.py` (faster-whisper) with `--languages` from `TRANSCRIBE_LANGUAGES` → edits a status message → `sendPromptToMappedAgent`.
 - Script resolution prefers `TRANSCRIBE_SCRIPT`, then `scripts/transcribe-voice.py`, then bundled `dist/transcribe/`. Prefetch model: `npm run prefetch:whisper`.
 
+**Photo prompts** (inbound, `TELEGRAM_PHOTOS_ENABLED`):
+
+- `handlePhotoMessage` / `handleImageDocumentMessage` download via `file-download.ts` → `data/image-cache/`.
+- Albums (`media_group_id`) batch in `PhotoAlbumCollector` (~800ms debounce) → one `processInboundPhotos` → `commandExecutor.sendPrompt({ text, imagePaths })`.
+- CDP attaches images via `DOM.setFileInputFiles` on composer file input, or paste fallback, then optional caption + Enter.
+
 **State subscription**:
 - `stateManager.on('state:patch', this.onStatePatch)`
 - `stateManager.on('connection:changed', this.onConnectionChanged)`

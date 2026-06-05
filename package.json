@@ -147,6 +147,11 @@
           "default": true,
           "markdownDescription": "While the agent is working, update one live status message in each topic instead of posting a new message for every tool/thought step."
         },
+        "cursorRemote.telegram.photosEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send Telegram photos (and albums) with optional caption to the mapped Cursor agent composer."
+        },
         "cursorRemote.transcribe.pythonPath": {
           "type": "string",
           "default": "python3",

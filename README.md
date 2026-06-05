@@ -252,6 +252,8 @@ When `TELEGRAM_COMPACT_LIVE` is enabled (default), in-flight tools and thoughts 
 
 **Voice notes** are transcribed locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and sent as Cursor prompts. Restrict languages with `TRANSCRIBE_LANGUAGES` (default `en,ru`). The first transcription downloads the model (~500MB); run `npm run prefetch:whisper` once to avoid timeouts on the first voice message.
 
+**Photos** (single or album) with an optional caption are downloaded and attached in the Cursor composer, then submitted as one prompt (`TELEGRAM_PHOTOS_ENABLED`, default on).
+
 ## Scripts
 
 | Command | Description |

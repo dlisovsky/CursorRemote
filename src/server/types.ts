@@ -367,4 +367,8 @@ export interface TelegramConfig {
   voiceEnabled: boolean;
   /** Collapse in-flight tools/thoughts into one editable Telegram message per topic. */
   compactLive: boolean;
+  /** Telegram photos → Cursor composer attachments. */
+  photosEnabled: boolean;
+  photoMaxCount: number;
+  photoMaxBytes: number;
 }

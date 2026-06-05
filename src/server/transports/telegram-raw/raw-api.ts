@@ -141,12 +141,29 @@ export interface TgUpdate {
   callback_query?: TgCallbackQuery;
 }
 
+export interface TgPhotoSize {
+  file_id: string;
+  width: number;
+  height: number;
+}
+
+export interface TgDocument {
+  file_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface TgMessage {
   message_id: number;
   from?: { id: number; username?: string; first_name?: string; is_bot?: boolean };
   chat: { id: number; type: string; is_forum?: boolean };
   text?: string;
+  caption?: string;
   voice?: { file_id: string; duration: number; file_unique_id?: string };
+  photo?: TgPhotoSize[];
+  document?: TgDocument;
+  media_group_id?: string;
   message_thread_id?: number;
   date: number;
 }

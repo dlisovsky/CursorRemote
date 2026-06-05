@@ -1,9 +1,115 @@
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { CdpClient } from './cdp-client.js';
 import type { SelectorConfig, CommandResult, PlanModelOption } from './types.js';
+
+export interface SendPromptOptions {
+  text?: string;
+  imagePaths?: string[];
+}
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 500;
 const FOCUS_DELAY_MS = 100;
+const ATTACH_VERIFY_TIMEOUT_MS = 2500;
+const ATTACH_VERIFY_POLL_MS = 150;
+
+/**
+ * Heuristic attachment score in the agent composer panel.
+ * Uses several signals because Cursor may render pasted images as canvas,
+ * background-image, or nodes outside `.composer-bar`.
+ */
+export const COMPOSER_ATTACHMENT_SCORE_JS = `
+  (() => {
+    const aux = document.getElementById('workbench.parts.auxiliarybar');
+    const roots = [
+      document.querySelector('.composer-bar'),
+      aux,
+    ].filter(Boolean);
+    const keys = new Set();
+
+    const addKey = (k) => { if (k) keys.add(k); };
+
+    const scoreRoot = (root) => {
+      for (const img of root.querySelectorAll('img')) {
+        const rect = img.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 20) continue;
+        const cls = (img.className || '').toString();
+        const src = img.currentSrc || img.getAttribute('src') || '';
+        if (/icon|avatar|logo|favicon/i.test(cls)) continue;
+        if (/\\.(svg|ico)(\\?|$)/i.test(src)) continue;
+        addKey('img:' + (src || rect.top + ':' + rect.left + ':' + rect.width));
+      }
+
+      for (const canvas of root.querySelectorAll('canvas')) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width >= 32 && rect.height >= 32) {
+          addKey('canvas:' + rect.top + ':' + rect.left + ':' + rect.width);
+        }
+      }
+
+      for (const el of root.querySelectorAll('*')) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 32 || rect.height < 32) continue;
+        const bg = getComputedStyle(el).backgroundImage || '';
+        if (bg.includes('blob:') || bg.includes('data:image')) {
+          addKey('bg:' + bg.slice(0, 96));
+        }
+      }
+
+      for (const chip of root.querySelectorAll(
+        '[class*="attachment" i], [class*="Attachment" i], [class*="image-preview" i], ' +
+        '[class*="ImagePreview" i], [class*="media-preview" i], [class*="context-pill" i], ' +
+        '[data-testid*="attachment" i]'
+      )) {
+        const rect = chip.getBoundingClientRect();
+        if (rect.width >= 28 && rect.height >= 28) {
+          addKey('chip:' + (chip.className || '').toString().slice(0, 80));
+        }
+      }
+
+      for (const input of root.querySelectorAll('input[type=file]')) {
+        const files = input.files;
+        if (files && files.length > 0) {
+          for (let i = 0; i < files.length; i++) addKey('file:' + files[i].name);
+        }
+      }
+
+      for (const btn of root.querySelectorAll('button[aria-label], [role="button"][aria-label]')) {
+        const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (!/remove|delete|detach|close image|remove image/.test(label)) continue;
+        const rect = btn.getBoundingClientRect();
+        if (rect.width < 8) continue;
+        addKey('rm:' + label + '@' + Math.round(rect.top));
+      }
+    };
+
+    for (const root of roots) scoreRoot(root);
+
+    // Media siblings above/near the chat input (common for pasted images).
+    const input =
+      document.querySelector('.composer-bar [contenteditable="true"]') ||
+      document.querySelector('.composer-bar textarea') ||
+      aux?.querySelector('[contenteditable="true"]') ||
+      aux?.querySelector('textarea');
+    if (input) {
+      let container = input.parentElement;
+      for (let depth = 0; depth < 6 && container; depth++) {
+        const cls = (container.className || '').toString();
+        if (/composer|aichat|chat-input|prompt/i.test(cls)) {
+          scoreRoot(container);
+          break;
+        }
+        container = container.parentElement;
+      }
+    }
+
+    return keys.size;
+  })()
+`;
+
+/** @deprecated Use COMPOSER_ATTACHMENT_SCORE_JS */
+export const COMPOSER_IMAGE_ATTACHMENT_COUNT_JS = COMPOSER_ATTACHMENT_SCORE_JS;
 
 // Resolves the currently-open model picker menu element across Cursor versions.
 // Older builds expose `[data-testid="model-picker-menu"]`; newer builds (~3.5.17)
@@ -184,53 +290,247 @@ export class CommandExecutor {
   }
 
   async sendMessage(commandId: string, text: string): Promise<CommandResult> {
+    return this.sendPrompt(commandId, { text });
+  }
+
+  async sendPrompt(commandId: string, options: SendPromptOptions): Promise<CommandResult> {
+    const text = options.text?.trim() ?? '';
+    const imagePaths = options.imagePaths ?? [];
+    if (!text && imagePaths.length === 0) {
+      return { commandId, ok: false, error: 'Nothing to send' };
+    }
+
+    if (!this.client || !this.client.isConnected()) {
+      return { commandId, ok: false, error: 'Not connected to Cursor' };
+    }
+
+    if (imagePaths.length > 0) {
+      const attachResult = await this.attachImagesOnce(this.client, imagePaths);
+      if (!attachResult.ok) {
+        return { commandId, ok: false, error: attachResult.error };
+      }
+      await sleep(400 + imagePaths.length * 200);
+    }
+
     return this.withRetry(commandId, async (client) => {
-      const strategies = this.selectors.chatInput.strategies;
+      const focus = await this.focusChatInput(client);
+      console.log(`[command-executor] Focused: ${focus.info}`);
 
-      // Step 1: Find and focus the input element (evaluate only for DOM query + focus)
-      const result = await client.evaluate(`
-        (() => {
-          const strategies = ${JSON.stringify(strategies)};
-          let input = null;
-          let matchedSelector = '';
-          for (const sel of strategies) {
-            try {
-              input = document.querySelector(sel);
-              if (input) { matchedSelector = sel; break; }
-            } catch {}
-          }
-          if (!input) return { ok: false, error: 'Chat input not found (tried ' + strategies.length + ' selectors)' };
-
-          const info = input.tagName + '.' + Array.from(input.classList).join('.') + ' | sel=' + matchedSelector;
-          input.scrollIntoView({ block: 'center', behavior: 'instant' });
-          input.focus();
-          input.click();
-          return { ok: true, info };
-        })()
-      `) as { ok: boolean; error?: string; info?: string } | null;
-
-      if (!result?.ok) {
-        throw new Error(result?.error ?? 'Failed to focus input');
+      if (imagePaths.length === 0) {
+        await client.pressKey('a', 'KeyA', 65, 2);
+        await sleep(50);
+        await client.pressKey('Backspace', 'Backspace', 8);
+        await sleep(50);
       }
 
-      console.log(`[command-executor] Focused: ${result.info}`);
-      await sleep(FOCUS_DELAY_MS);
+      if (text) {
+        await client.typeText(text);
+        console.log(`[command-executor] Text inserted (${text.length} chars)`);
+        await sleep(150);
+      }
 
-      // Step 2: Clear any existing text via Ctrl+A then Delete (CDP Input domain)
-      await client.pressKey('a', 'KeyA', 65, 2); // 2 = Ctrl modifier
-      await sleep(50);
-      await client.pressKey('Backspace', 'Backspace', 8);
-      await sleep(50);
-
-      // Step 3: Insert text via CDP Input.insertText (native Chromium input pipeline)
-      await client.typeText(text);
-      console.log(`[command-executor] Text inserted via Input.insertText (${text.length} chars)`);
-      await sleep(150);
-
-      // Step 4: Submit with Enter via CDP Input.dispatchKeyEvent
       await client.pressKey('Enter', 'Enter', 13);
-      console.log(`[command-executor] Enter pressed via CDP Input.dispatchKeyEvent`);
+      console.log('[command-executor] Prompt submitted (Enter)');
     });
+  }
+
+  private async focusChatInput(client: CdpClient): Promise<{ info: string }> {
+    const strategies = this.selectors.chatInput.strategies;
+    const result = await client.evaluate(`
+      (() => {
+        const strategies = ${JSON.stringify(strategies)};
+        let input = null;
+        let matchedSelector = '';
+        for (const sel of strategies) {
+          try {
+            input = document.querySelector(sel);
+            if (input) { matchedSelector = sel; break; }
+          } catch {}
+        }
+        if (!input) return { ok: false, error: 'Chat input not found (tried ' + strategies.length + ' selectors)' };
+
+        const info = input.tagName + '.' + Array.from(input.classList).join('.') + ' | sel=' + matchedSelector;
+        input.scrollIntoView({ block: 'center', behavior: 'instant' });
+        input.focus();
+        input.click();
+        return { ok: true, info };
+      })()
+    `) as { ok: boolean; error?: string; info?: string } | null;
+
+    if (!result?.ok) {
+      throw new Error(result?.error ?? 'Failed to focus input');
+    }
+    await sleep(FOCUS_DELAY_MS);
+    return { info: result.info ?? 'chat input' };
+  }
+
+  private async measureAttachmentScore(client: CdpClient): Promise<number> {
+    const n = await client.evaluate(COMPOSER_ATTACHMENT_SCORE_JS);
+    return typeof n === 'number' && n >= 0 ? n : 0;
+  }
+
+  private async waitForAttachmentDelta(
+    client: CdpClient,
+    baseline: number,
+    minDelta: number
+  ): Promise<boolean> {
+    const deadline = Date.now() + ATTACH_VERIFY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const score = await this.measureAttachmentScore(client);
+      if (score - baseline >= minDelta) return true;
+      await sleep(ATTACH_VERIFY_POLL_MS);
+    }
+    return false;
+  }
+
+  /**
+   * Attach images exactly once (never inside withRetry).
+   * Success when attachment score rises by at least imagePaths.length, or by ≥1
+   * when a single image was requested (counter may under-count albums).
+   */
+  private async attachImagesOnce(
+    client: CdpClient,
+    imagePaths: string[]
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const baseline = await this.measureAttachmentScore(client);
+    const minDelta = imagePaths.length;
+    const requiredDelta = minDelta === 1 ? 1 : minDelta;
+
+    const current = await this.measureAttachmentScore(client);
+    if (current - baseline >= requiredDelta) {
+      console.log('[command-executor] Images already in composer, skipping attach');
+      return { ok: true };
+    }
+
+    const fileInputStrategies = this.selectors.composerFileInput?.strategies ?? [
+      '.composer-bar input[type=file]',
+      '#workbench\\.parts\\.auxiliarybar input[type=file]',
+      'input[type=file][accept*="image"]',
+      'input[type=file]',
+    ];
+
+    let attached = await client.setFileInputFiles(fileInputStrategies, imagePaths);
+
+    if (!attached.ok) {
+      const attachStrategies = this.selectors.composerAttachButton?.strategies ?? [
+        'button[aria-label*="Attach"]',
+        'button[aria-label*="attach"]',
+      ];
+      for (const sel of attachStrategies) {
+        try {
+          if (await client.exists(sel)) {
+            await client.click(sel);
+            await sleep(250);
+            break;
+          }
+        } catch { /* try next */ }
+      }
+      attached = await client.setFileInputFiles(fileInputStrategies, imagePaths);
+    }
+
+    if (attached.ok) {
+      if (await this.waitForAttachmentDelta(client, baseline, requiredDelta)) {
+        console.log(
+          `[command-executor] Attached ${imagePaths.length} file(s) via file input (${attached.selector})`
+        );
+        return { ok: true };
+      }
+      const delta = (await this.measureAttachmentScore(client)) - baseline;
+      if (delta >= 1) {
+        console.log(
+          `[command-executor] File input attached (score +${delta}, wanted +${requiredDelta})`
+        );
+        return { ok: true };
+      }
+      // CDP set files succeeded but score unchanged — avoid paste duplicate.
+      console.log(
+        `[command-executor] File input set on ${attached.selector}; proceeding without paste`
+      );
+      return { ok: true };
+    }
+
+    const beforePaste = await this.measureAttachmentScore(client);
+    if (beforePaste - baseline >= requiredDelta) {
+      console.log('[command-executor] Attachments detected before paste, skipping paste');
+      return { ok: true };
+    }
+    try {
+      await this.attachImagesViaPaste(client, imagePaths);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+
+    await sleep(400);
+    if (await this.waitForAttachmentDelta(client, baseline, requiredDelta)) {
+      console.log(`[command-executor] Attached ${imagePaths.length} image(s) via paste`);
+      return { ok: true };
+    }
+
+    const afterPaste = await this.measureAttachmentScore(client);
+    const pasteDelta = afterPaste - beforePaste;
+    if (pasteDelta >= 1 || afterPaste - baseline >= 1) {
+      console.log(
+        `[command-executor] Paste likely succeeded (score +${pasteDelta}, total +${afterPaste - baseline})`
+      );
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      error: `Could not verify images in composer (wanted +${requiredDelta}, score +${afterPaste - baseline})`,
+    };
+  }
+
+  private async attachImagesViaPaste(client: CdpClient, imagePaths: string[]): Promise<void> {
+    const strategies = this.selectors.chatInput.strategies;
+
+    for (const imagePath of imagePaths) {
+      const buf = readFileSync(imagePath);
+      const name = basename(imagePath);
+      const ext = name.split('.').pop()?.toLowerCase() ?? 'png';
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'webp' ? 'image/webp'
+          : ext === 'gif' ? 'image/gif'
+            : 'image/png';
+      const payload = { name, mime, base64: buf.toString('base64') };
+
+      const result = await client.callFunction(
+        (inputStrategies: string[], file: { name: string; mime: string; base64: string }) => {
+          let input: Element | null = null;
+          for (const sel of inputStrategies) {
+            try {
+              input = document.querySelector(sel);
+              if (input) break;
+            } catch { /* continue */ }
+          }
+          if (!input) return { ok: false, error: 'Chat input not found for paste' };
+
+          input.scrollIntoView({ block: 'center', behavior: 'instant' });
+          const el = input as HTMLElement;
+          el.focus();
+          el.click();
+
+          const bin = atob(file.base64);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          const blob = new File([arr], file.name, { type: file.mime });
+          const dt = new DataTransfer();
+          dt.items.add(blob);
+          el.dispatchEvent(
+            new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+          );
+          return { ok: true };
+        },
+        strategies,
+        payload
+      ) as { ok: boolean; error?: string };
+
+      if (!result?.ok) {
+        throw new Error(result?.error ?? 'Chat input not found for paste');
+      }
+      await sleep(300);
+    }
   }
 
   async clickApproval(

@@ -11,6 +11,8 @@ import {
   handleCallbackQuery,
   handleTextMessage,
   handleVoiceMessage,
+  handlePhotoMessage,
+  handleImageDocumentMessage,
 } from '../telegram/commands.js';
 import { RawTelegramApiClient, type TgUpdate } from './raw-api.js';
 
@@ -141,13 +143,35 @@ export class RawTelegramTransport extends BaseTelegramTransport {
   // --- Update dispatch ---
 
   private async dispatchUpdate(update: TgUpdate): Promise<void> {
-    if (update.message?.voice) {
-      const userId = update.message.from?.id;
-      if (!userId || !this.registeredUsers.has(userId)) return;
-      const ctx = this.makeContext(update);
-      await handleVoiceMessage(ctx, this.deps);
-    } else if (update.message?.text) {
-      const text = update.message.text;
+    const msg = update.message;
+    if (!msg) {
+      if (update.callback_query) {
+        const userId = update.callback_query.from?.id;
+        if (!userId || !this.registeredUsers.has(userId)) return;
+        await handleCallbackQuery(this.makeContext(update), this.deps);
+      }
+      return;
+    }
+
+    const userId = msg.from?.id;
+    if (!userId || !this.registeredUsers.has(userId)) return;
+
+    const albumCollector = this.getPhotoAlbumCollector();
+
+    if (msg.photo?.length) {
+      await handlePhotoMessage(this.makeContext(update), this.deps, albumCollector);
+      return;
+    }
+
+    if (msg.document) {
+      await handleImageDocumentMessage(this.makeContext(update), this.deps, albumCollector);
+      return;
+    }
+
+    if (msg.voice) {
+      await handleVoiceMessage(this.makeContext(update), this.deps);
+    } else if (msg.text) {
+      const text = msg.text;
       const ctx = this.makeContext(update);
 
       if (text.startsWith('/')) {
@@ -160,23 +184,13 @@ export class RawTelegramTransport extends BaseTelegramTransport {
           return;
         }
 
-        const userId = update.message.from?.id;
-        if (!userId || !this.registeredUsers.has(userId)) return;
-
-        const who = update.message.from?.username ? `@${update.message.from.username}` : String(userId);
+        const who = msg.from?.username ? `@${msg.from.username}` : String(userId);
         console.log(`[telegram-raw] ${who} → /${cmd}`);
 
         await this.dispatchCommand(cmd, ctx, this.deps);
       } else {
-        const userId = update.message.from?.id;
-        if (!userId || !this.registeredUsers.has(userId)) return;
         await handleTextMessage(ctx, this.deps);
       }
-    } else if (update.callback_query) {
-      const userId = update.callback_query.from?.id;
-      if (!userId || !this.registeredUsers.has(userId)) return;
-      const ctx = this.makeContext(update);
-      await handleCallbackQuery(ctx, this.deps);
     }
   }
 
@@ -192,8 +206,12 @@ export class RawTelegramTransport extends BaseTelegramTransport {
       chat: msg?.chat ?? cbq?.message?.chat,
       message: msg ? {
         text: msg.text,
+        caption: msg.caption,
         message_thread_id: msg.message_thread_id,
+        media_group_id: msg.media_group_id,
         voice: msg.voice ? { file_id: msg.voice.file_id, duration: msg.voice.duration } : undefined,
+        photo: msg.photo,
+        document: msg.document,
       } : undefined,
       callbackQuery: cbq ? {
         data: cbq.data,
