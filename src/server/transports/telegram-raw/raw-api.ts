@@ -154,6 +154,12 @@ export interface TgDocument {
   file_size?: number;
 }
 
+export interface TgTextQuote {
+  text: string;
+  position?: number;
+  is_manual?: boolean;
+}
+
 export interface TgMessage {
   message_id: number;
   from?: { id: number; username?: string; first_name?: string; is_bot?: boolean };
@@ -166,6 +172,8 @@ export interface TgMessage {
   media_group_id?: string;
   message_thread_id?: number;
   date: number;
+  quote?: TgTextQuote;
+  reply_to_message?: TgMessage;
 }
 
 export interface TgCallbackQuery {

@@ -71,6 +71,11 @@ function grammyCtxToBotCtx(ctx: import('grammy').Context): BotContext {
         mime_type: ctx.message.document.mime_type,
         file_size: ctx.message.document.file_size,
       } : undefined,
+      quote: ctx.message.quote ? { text: ctx.message.quote.text } : undefined,
+      reply_to_message: ctx.message.reply_to_message ? {
+        text: ctx.message.reply_to_message.text,
+        caption: ctx.message.reply_to_message.caption,
+      } : undefined,
     } : undefined,
     callbackQuery: ctx.callbackQuery ? {
       data: ctx.callbackQuery.data,

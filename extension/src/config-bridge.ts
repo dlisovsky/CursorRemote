@@ -21,6 +21,7 @@ export function buildEnvFromConfig(
     TELEGRAM_VOICE_ENABLED: String(config.get<boolean>('telegram.voiceEnabled', true)),
     TELEGRAM_PHOTOS_ENABLED: String(config.get<boolean>('telegram.photosEnabled', true)),
     TELEGRAM_COMPACT_LIVE: String(config.get<boolean>('telegram.compactLive', true)),
+    TELEGRAM_SHOW_TOOLS: String(config.get<boolean>('telegram.showTools', false)),
     TRANSCRIBE_PYTHON: config.get<string>('transcribe.pythonPath', 'python3'),
     TRANSCRIBE_MODEL: config.get<string>('transcribe.model', 'small'),
     TRANSCRIBE_LANGUAGES: config.get<string>('transcribe.languages', 'en,ru'),

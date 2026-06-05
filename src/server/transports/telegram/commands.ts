@@ -15,6 +15,26 @@ import type { PhotoAlbumItem } from './photo-album-collector.js';
 import { cleanTabTitle } from '../../dom-extractor.js';
 import { normalizeWindowTitle } from './topic-manager.js';
 import { tgKeyboard, type BotContext, type TelegramApiClient } from './tg-types.js';
+import {
+  buildPromptWithQuote,
+  extractTelegramQuote,
+  type TelegramQuoteSource,
+} from './telegram-quote.js';
+import { recordTelegramInboundPrompt } from './telegram-inbound-prompt.js';
+
+function quoteSourceFromMessage(msg: BotContext['message']): TelegramQuoteSource | undefined {
+  if (!msg?.quote && !msg?.reply_to_message) return undefined;
+  return { quote: msg.quote, reply_to_message: msg.reply_to_message };
+}
+
+function promptFromTelegramMessage(userText: string, msg: BotContext['message']): string {
+  const quoted = extractTelegramQuote(msg);
+  const prompt = buildPromptWithQuote(userText, quoted);
+  if (quoted) {
+    console.log(`[telegram-quote] Including ${quoted.length} char quote in prompt`);
+  }
+  return prompt;
+}
 
 export interface CommandDeps {
   api: TelegramApiClient;
@@ -1264,6 +1284,8 @@ export async function sendPromptToMappedAgent(
   const threadId = ctx.message?.message_thread_id;
   if (!threadId) return false;
 
+  recordTelegramInboundPrompt(threadId, text);
+
   const mapping = deps.topicManager.resolveThread(threadId);
   if (!mapping) {
     await ctx.reply('⚠️ This topic is not mapped. Run /sync to set up.');
@@ -1393,12 +1415,16 @@ export async function processInboundPhotos(
     }
 
     const caption = item.caption?.trim() ?? '';
-    const preview = caption.length > 280 ? `${caption.slice(0, 279)}…` : caption;
+    const promptText = buildPromptWithQuote(caption, extractTelegramQuote(item.quoteSource));
+    if (item.quoteSource && extractTelegramQuote(item.quoteSource)) {
+      console.log('[telegram-quote] Including quote on photo prompt');
+    }
+    const preview = promptText.length > 280 ? `${promptText.slice(0, 279)}…` : promptText;
     const countLabel = paths.length === 1 ? '1 image' : `${paths.length} images`;
     await deps.api.editMessageText(
       chatId,
       status.message_id,
-      caption
+      promptText
         ? `📷 <b>${countLabel}</b>\n${escapeHtml(preview)}`
         : `📷 <b>${countLabel}</b> (no caption)`,
       { message_thread_id: threadId, parse_mode: 'HTML' }
@@ -1416,7 +1442,7 @@ export async function processInboundPhotos(
       answerCallbackQuery: async () => {},
     };
 
-    const sent = await sendPromptToMappedAgent(pseudoCtx, deps, caption, paths);
+    const sent = await sendPromptToMappedAgent(pseudoCtx, deps, promptText, paths);
     if (!sent) {
       throw new Error('Failed to send photos to Cursor');
     }
@@ -1424,7 +1450,7 @@ export async function processInboundPhotos(
     await deps.api.editMessageText(
       chatId,
       status.message_id,
-      `✅ <b>Sent to Cursor</b> (${countLabel})${caption ? `\n${escapeHtml(preview)}` : ''}`,
+      `✅ <b>Sent to Cursor</b> (${countLabel})${promptText ? `\n${escapeHtml(preview)}` : ''}`,
       { message_thread_id: threadId, parse_mode: 'HTML' }
     );
   } catch (err) {
@@ -1450,7 +1476,16 @@ export async function processInboundPhotos(
 export async function handlePhotoMessage(
   ctx: BotContext,
   deps: CommandDeps,
-  albumCollector: { add: (chatId: number, threadId: number, mediaGroupId: string, fileId: string, caption?: string) => void }
+  albumCollector: {
+    add: (
+      chatId: number,
+      threadId: number,
+      mediaGroupId: string,
+      fileId: string,
+      caption?: string,
+      quoteSource?: TelegramQuoteSource
+    ) => void;
+  }
 ): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
   const photos = ctx.message?.photo;
@@ -1460,22 +1495,33 @@ export async function handlePhotoMessage(
   const fileId = largestPhotoFileId(photos);
   const caption = ctx.message?.caption;
   const mediaGroupId = ctx.message?.media_group_id;
+  const quoteSource = quoteSourceFromMessage(ctx.message);
 
   if (mediaGroupId) {
-    albumCollector.add(chatId, threadId, mediaGroupId, fileId, caption);
+    albumCollector.add(chatId, threadId, mediaGroupId, fileId, caption, quoteSource);
     return;
   }
 
   await processInboundPhotos(deps, { chatId, threadId }, {
     fileIds: [fileId],
     caption,
+    quoteSource,
   });
 }
 
 export async function handleImageDocumentMessage(
   ctx: BotContext,
   deps: CommandDeps,
-  albumCollector: { add: (chatId: number, threadId: number, mediaGroupId: string, fileId: string, caption?: string) => void }
+  albumCollector: {
+    add: (
+      chatId: number,
+      threadId: number,
+      mediaGroupId: string,
+      fileId: string,
+      caption?: string,
+      quoteSource?: TelegramQuoteSource
+    ) => void;
+  }
 ): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
   const doc = ctx.message?.document;
@@ -1484,22 +1530,26 @@ export async function handleImageDocumentMessage(
 
   const caption = ctx.message?.caption;
   const mediaGroupId = ctx.message?.media_group_id;
+  const quoteSource = quoteSourceFromMessage(ctx.message);
 
   if (mediaGroupId) {
-    albumCollector.add(chatId, threadId, mediaGroupId, doc.file_id, caption);
+    albumCollector.add(chatId, threadId, mediaGroupId, doc.file_id, caption, quoteSource);
     return;
   }
 
   await processInboundPhotos(deps, { chatId, threadId }, {
     fileIds: [doc.file_id],
     caption,
+    quoteSource,
   });
 }
 
 export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
-  const text = ctx.message?.text;
-  if (!ctx.message?.message_thread_id || !text) return;
-  await sendPromptToMappedAgent(ctx, deps, text);
+  if (!ctx.message?.message_thread_id) return;
+  const text = ctx.message.text ?? '';
+  const prompt = promptFromTelegramMessage(text, ctx.message);
+  if (!prompt.trim()) return;
+  await sendPromptToMappedAgent(ctx, deps, prompt);
 }
 
 export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
@@ -1532,20 +1582,17 @@ export async function handleVoiceMessage(ctx: BotContext, deps: CommandDeps): Pr
     audioPath = await downloadVoiceFile(deps.api, deps.botToken, voice.file_id, deps.dataDir);
     const result = await transcribeVoiceFile(audioPath, deps.transcribe);
 
-    const preview = result.text.length > 500 ? `${result.text.slice(0, 500)}…` : result.text;
+    const prompt = promptFromTelegramMessage(result.text, ctx.message);
+    const preview = prompt.length > 500 ? `${prompt.slice(0, 500)}…` : prompt;
+    const sent = await sendPromptToMappedAgent(ctx, deps, prompt);
+
+    const statusBody = sent
+      ? `✅ <b>Sent to Cursor</b> (${escapeHtml(result.language)})\n${escapeHtml(preview.length > 900 ? `${preview.slice(0, 899)}…` : preview)}`
+      : `⚠️ <b>Failed to send</b>\n${escapeHtml(preview.length > 400 ? `${preview.slice(0, 399)}…` : preview)}`;
     await deps.api.editMessageText(
       chatId,
       statusMsg.message_id,
-      `📝 <b>Transcribed</b> (${escapeHtml(result.language)}):\n${escapeHtml(preview)}`,
-      { message_thread_id: threadId, parse_mode: 'HTML' }
-    );
-
-    await sendPromptToMappedAgent(ctx, deps, result.text);
-
-    await deps.api.editMessageText(
-      chatId,
-      statusMsg.message_id,
-      `✅ <b>Sent to Cursor</b>\n${escapeHtml(preview.length > 280 ? `${preview.slice(0, 279)}…` : preview)}`,
+      statusBody,
       { message_thread_id: threadId, parse_mode: 'HTML' }
     );
   } catch (err) {

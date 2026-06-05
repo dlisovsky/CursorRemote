@@ -17,6 +17,7 @@ import type {
 } from '../../types.js';
 import { readPlanFile } from '../../plan-files.js';
 import { tgKeyboard, type TgKeyboard } from './tg-types.js';
+import { compactApprovalDescription } from './telegram-approval-format.js';
 
 const TG_MSG_LIMIT = 4096;
 
@@ -461,7 +462,8 @@ export function formatApprovals(
   if (approvals.length === 0) return { html: '' };
 
   const approval = approvals[0];
-  const html = `⚠️ <b>Approval needed:</b> ${escapeHtml(approval.description)}`;
+  const summary = compactApprovalDescription(approval.description);
+  const html = `⚠️ <b>Approval needed</b>\n<code>${escapeHtml(summary)}</code>`;
 
   const kb = tgKeyboard();
   for (const action of approval.actions) {

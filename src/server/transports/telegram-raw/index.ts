@@ -212,6 +212,11 @@ export class RawTelegramTransport extends BaseTelegramTransport {
         voice: msg.voice ? { file_id: msg.voice.file_id, duration: msg.voice.duration } : undefined,
         photo: msg.photo,
         document: msg.document,
+        quote: msg.quote ? { text: msg.quote.text } : undefined,
+        reply_to_message: msg.reply_to_message ? {
+          text: msg.reply_to_message.text,
+          caption: msg.reply_to_message.caption,
+        } : undefined,
       } : undefined,
       callbackQuery: cbq ? {
         data: cbq.data,

@@ -250,9 +250,13 @@ Plain text in any topic is sent as a prompt to the mapped Cursor agent.
 
 When `TELEGRAM_COMPACT_LIVE` is enabled (default), in-flight tools and thoughts update **one editable message** per topic instead of spamming separate messages. Set `TELEGRAM_COMPACT_LIVE=false` to restore the legacy per-activity message behavior.
 
+Telegram topics stay compact by default: **no** `You:` echo after voice/text you sent from TG, **no** per-tool step lines (`TELEGRAM_SHOW_TOOLS=false`), **one** final assistant reply. While the agent runs, a single **panel** message updates in place (`TELEGRAM_COMPACT_LIVE=true`); shell **approvals** reuse that panel with a short command summary (not the full zsh wrapper). Typical voice turn: (1) your `✅ Sent to Cursor` status, (2) one agent panel for progress → approval → answer. Logs: `[telegram-out]` in `temp/server.log`.
+
 **Voice notes** are transcribed locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and sent as Cursor prompts. Restrict languages with `TRANSCRIBE_LANGUAGES` (default `en,ru`). The first transcription downloads the model (~500MB); run `npm run prefetch:whisper` once to avoid timeouts on the first voice message.
 
 **Photos** (single or album) with an optional caption are downloaded and attached in the Cursor composer, then submitted as one prompt (`TELEGRAM_PHOTOS_ENABLED`, default on).
+
+**Quote replies** — select text on an agent message in Telegram and reply; the quoted snippet is sent to Cursor as a `Regarding:` block in the prompt (full reply fallback when no partial quote).
 
 ## Scripts
 

@@ -442,11 +442,9 @@ export class CommandExecutor {
         );
         return { ok: true };
       }
-      // CDP set files succeeded but score unchanged — avoid paste duplicate.
       console.log(
-        `[command-executor] File input set on ${attached.selector}; proceeding without paste`
+        `[command-executor] File input set on ${attached.selector} but score +${delta} (wanted +${requiredDelta}); trying paste`
       );
-      return { ok: true };
     }
 
     const beforePaste = await this.measureAttachmentScore(client);

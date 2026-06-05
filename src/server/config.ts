@@ -38,6 +38,9 @@ export function loadConfig(): ServerConfig {
       impl: (process.env.TELEGRAM_IMPL === 'raw' ? 'raw' : 'grammy') as 'grammy' | 'raw',
       voiceEnabled: process.env.TELEGRAM_VOICE_ENABLED !== 'false',
       compactLive: process.env.TELEGRAM_COMPACT_LIVE !== 'false',
+      showTools:
+        process.env.TELEGRAM_SHOW_TOOLS === 'true' ||
+        process.env.TELEGRAM_SHOW_FILE_TOOLS === 'true',
       photosEnabled: process.env.TELEGRAM_PHOTOS_ENABLED !== 'false',
       photoMaxCount: parseInt(process.env.TELEGRAM_PHOTO_MAX_COUNT ?? '10', 10),
       photoMaxBytes: parseInt(process.env.TELEGRAM_PHOTO_MAX_BYTES ?? String(10 * 1024 * 1024), 10),

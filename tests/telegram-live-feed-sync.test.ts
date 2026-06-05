@@ -42,15 +42,27 @@ describe('shouldSkipMessageForCompactLive', () => {
   };
 
   it('skips loading tools when compact live is on', () => {
-    assert.equal(shouldSkipMessageForCompactLive(true, loadingTool), true);
+    assert.equal(shouldSkipMessageForCompactLive(true, loadingTool, true, 1), true);
   });
 
-  it('does not skip when compact live is off', () => {
-    assert.equal(shouldSkipMessageForCompactLive(false, loadingTool), false);
+  it('does not skip loading tools for separate messages when compact is off and showTools on', () => {
+    assert.equal(shouldSkipMessageForCompactLive(false, loadingTool, true, 1), false);
   });
 
-  it('does not skip completed tools when compact is on', () => {
-    const done: ChatElement = { ...loadingTool, status: 'completed' };
-    assert.equal(shouldSkipMessageForCompactLive(true, done), false);
+  it('skips completed tools when showTools is off', () => {
+    const done: ChatElement = { ...loadingTool, status: 'completed', filename: 'foo.ts' };
+    assert.equal(shouldSkipMessageForCompactLive(true, done, false, 1), true);
+    assert.equal(shouldSkipMessageForCompactLive(false, done, false, 1), true);
+  });
+
+  it('skips thoughts always', () => {
+    const thought: ChatElement = {
+      type: 'thought',
+      id: 'th',
+      flatIndex: 0,
+      duration: '1s',
+      action: 'Planning',
+    };
+    assert.equal(shouldSkipMessageForCompactLive(false, thought, false, 1), true);
   });
 });

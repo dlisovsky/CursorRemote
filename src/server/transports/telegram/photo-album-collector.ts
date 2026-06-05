@@ -1,6 +1,9 @@
+import type { TelegramQuoteSource } from './telegram-quote.js';
+
 export interface PhotoAlbumItem {
   fileIds: string[];
   caption?: string;
+  quoteSource?: TelegramQuoteSource;
 }
 
 export interface PhotoAlbumFlush {
@@ -14,6 +17,7 @@ type FlushHandler = (flush: PhotoAlbumFlush) => void | Promise<void>;
 interface PendingAlbum {
   fileIds: string[];
   caption?: string;
+  quoteSource?: TelegramQuoteSource;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -36,7 +40,8 @@ export class PhotoAlbumCollector {
     threadId: number,
     mediaGroupId: string,
     fileId: string,
-    caption?: string
+    caption?: string,
+    quoteSource?: TelegramQuoteSource
   ): void {
     const k = this.key(chatId, threadId, mediaGroupId);
     const existing = this.pending.get(k);
@@ -44,10 +49,12 @@ export class PhotoAlbumCollector {
       clearTimeout(existing.timer);
       existing.fileIds.push(fileId);
       if (caption?.trim()) existing.caption = caption.trim();
+      if (quoteSource) existing.quoteSource = quoteSource;
     } else {
       this.pending.set(k, {
         fileIds: [fileId],
         caption: caption?.trim() || undefined,
+        quoteSource,
         timer: setTimeout(() => this.flushKey(k), ALBUM_DEBOUNCE_MS),
       });
       return;
@@ -70,7 +77,11 @@ export class PhotoAlbumCollector {
     void this.onFlush({
       chatId,
       threadId,
-      item: { fileIds: [...entry.fileIds], caption: entry.caption },
+      item: {
+        fileIds: [...entry.fileIds],
+        caption: entry.caption,
+        quoteSource: entry.quoteSource,
+      },
     });
   }
 

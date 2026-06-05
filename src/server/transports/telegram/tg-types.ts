@@ -53,6 +53,10 @@ export interface BotContext {
     voice?: { file_id: string; duration: number };
     photo?: TgPhotoSize[];
     document?: TgDocument;
+    /** Partial quote when user selects text and taps Reply (Bot API TextQuote). */
+    quote?: { text?: string };
+    /** Message being replied to (full-message fallback). */
+    reply_to_message?: { text?: string; caption?: string };
   };
   callbackQuery?: {
     data?: string;

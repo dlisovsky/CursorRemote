@@ -23,6 +23,8 @@ import {
   type FormattedMessage,
 } from './formatter.js';
 import { planLiveFeedUpdate, shouldSkipMessageForCompactLive } from './live-feed-sync.js';
+import { filterEphemeralForLiveFeed, lastAssistantIdInTail } from './telegram-sync-filter.js';
+import { logTelegramOut } from './telegram-out-log.js';
 import { AGENT_ACTIVITY_STALE_MS } from '../../activity-stale.js';
 import type { TelegramApiClient, BotContext } from './tg-types.js';
 import type { CommandDeps, RegisterDeps } from './commands.js';
@@ -621,7 +623,12 @@ export abstract class BaseTelegramTransport implements Transport {
 
     const activityText = snapshot.agentActivityLive ? snapshot.agentActivityText : null;
     const hashCallback = (sp: string) => this.messageTracker.hashSelector(sp);
-    const html = formatLiveFeed(activityText, ephemeralElements, allMessages, hashCallback);
+    const html = formatLiveFeed(
+      activityText,
+      filterEphemeralForLiveFeed(ephemeralElements, this.config.showTools),
+      allMessages,
+      hashCallback
+    );
     const contentHash = MessageTracker.contentHash(html || '(empty)');
     const existingId = this.liveFeedMsgIds.get(threadId);
     const action = planLiveFeedUpdate(
@@ -633,6 +640,7 @@ export abstract class BaseTelegramTransport implements Transport {
 
     if (action === 'none') return;
     if (action === 'delete') {
+      logTelegramOut('delete', threadId, 'live-feed', { msgId: existingId });
       this.deleteLiveFeedMessage(threadId);
       return;
     }
@@ -643,6 +651,10 @@ export abstract class BaseTelegramTransport implements Transport {
           () => this.api.editMessageText(this.chatId!, existingId, html, { parse_mode: 'HTML' }),
           'edit'
         );
+        logTelegramOut('edit', threadId, 'live-feed', {
+          msgId: existingId,
+          chars: html.length,
+        });
       } else {
         const sent = await this.sendQueue.enqueue(
           () => this.api.sendMessage(this.chatId!, html, {
@@ -652,6 +664,10 @@ export abstract class BaseTelegramTransport implements Transport {
           'send'
         );
         this.liveFeedMsgIds.set(threadId, sent.message_id);
+        logTelegramOut('send', threadId, 'live-feed', {
+          msgId: sent.message_id,
+          chars: html.length,
+        });
       }
       const now = Date.now();
       this.lastLiveFeedHash.set(threadId, contentHash);
@@ -839,16 +855,27 @@ export abstract class BaseTelegramTransport implements Transport {
     const messages = snapshot.messages;
     const hashCallback = (sp: string) => this.messageTracker.hashSelector(sp);
     const tailForEphemeral = messages.slice(-Math.min(messages.length, MAX_INITIAL_MESSAGES + 10));
-    const ephemeralInTail = tailForEphemeral.filter(isEphemeralElement);
+    const ephemeralInTail = filterEphemeralForLiveFeed(
+      tailForEphemeral.filter(isEphemeralElement),
+      this.config.showTools
+    );
     const agentBusy = BaseTelegramTransport.isAgentBusy(snapshot);
     const useCompactLive = this.config.compactLive && (agentBusy || ephemeralInTail.length > 0);
+    const hasPendingApprovals = snapshot.pendingApprovals.length > 0;
 
-    if (useCompactLive) {
+    // Approvals first so they can reuse the live-feed panel message id.
+    await this.processApprovalsForThread(threadId, snapshot.pendingApprovals);
+
+    if (useCompactLive && !hasPendingApprovals) {
       if (this.activityMsgIds.has(threadId)) {
         this.deleteActivityMessage(threadId);
       }
       await this.syncLiveFeedMessage(threadId, snapshot, ephemeralInTail, messages);
-    } else {
+    } else if (useCompactLive && hasPendingApprovals) {
+      if (this.activityMsgIds.has(threadId)) {
+        this.deleteActivityMessage(threadId);
+      }
+    } else if (!useCompactLive) {
       this.deleteLiveFeedMessage(threadId);
 
       const activityText = snapshot.agentActivityLive ? snapshot.agentActivityText : null;
@@ -904,13 +931,6 @@ export abstract class BaseTelegramTransport implements Transport {
 
     await this.syncComposerQueueMessage(threadId, snapshot);
 
-    // Per-window approval banner. The global state-patch path only sees the
-    // active CDP window; non-active windows are polled by window-monitor and
-    // their pendingApprovals would never reach Telegram otherwise. Routing
-    // per window also means each window's banner lands in its own thread.
-    // Safe to dual-fire with the global path: per-id contentHash dedupes.
-    await this.processApprovalsForThread(threadId, snapshot.pendingApprovals);
-
     if (messages.length === 0) return;
 
     if (!this.seenThreads.has(threadId)) {
@@ -926,10 +946,21 @@ export abstract class BaseTelegramTransport implements Transport {
     }
 
     const tail = messages.slice(-Math.min(messages.length, MAX_INITIAL_MESSAGES + 10));
+    const lastAssistantId = lastAssistantIdInTail(tail);
+    const panelMsgId = this.liveFeedMsgIds.get(threadId);
 
     for (const element of tail) {
       if (element.type === 'loading') continue;
-      if (shouldSkipMessageForCompactLive(useCompactLive, element)) continue;
+      if (shouldSkipMessageForCompactLive(
+        useCompactLive,
+        element,
+        this.config.showTools,
+        threadId,
+        lastAssistantId
+      )) {
+        await this.removeTrackedTelegramMessages(threadId, element.id);
+        continue;
+      }
 
       const formatted = formatElement(element, hashCallback);
       if (!formatted.html) continue;
@@ -937,6 +968,23 @@ export abstract class BaseTelegramTransport implements Transport {
       const keyboardSuffix = formatted.keyboard ? `\x00kb:${JSON.stringify(formatted.keyboard)}` : '';
       const contentHash = MessageTracker.contentHash(formatted.html + keyboardSuffix);
       const tracked = this.messageTracker.getTracked(threadId, element.id);
+
+      if (
+        element.type === 'assistant' &&
+        lastAssistantId &&
+        element.id === lastAssistantId &&
+        panelMsgId &&
+        !hasPendingApprovals
+      ) {
+        const posted = await this.postToPanelMessage(
+          threadId,
+          panelMsgId,
+          element,
+          formatted,
+          contentHash
+        );
+        if (posted) continue;
+      }
 
       if (tracked) {
         if (!this.messageTracker.hasChanged(threadId, element.id, contentHash)) continue;
@@ -996,6 +1044,12 @@ export abstract class BaseTelegramTransport implements Transport {
           }
 
           this.messageTracker.track(threadId, element.id, allMsgIds, contentHash, element.type);
+          logTelegramOut('edit', threadId, element.type, {
+            parts: parts.length,
+            msgId: allMsgIds[0],
+            chars: formatted.html.length,
+            elementId: element.id,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.includes('message is not modified')) {
@@ -1014,6 +1068,94 @@ export abstract class BaseTelegramTransport implements Transport {
     // for messages (plan widget) in this same cycle.
     const currentQuestionnaire = this.stateManager.getCurrentState().questionnaire;
     await this.processQuestionnaireForThread(threadId, currentQuestionnaire);
+  }
+
+  /**
+   * Reuse the compact live-feed message as the final assistant reply (one fewer TG message).
+   */
+  private async postToPanelMessage(
+    threadId: number,
+    panelMsgId: number,
+    element: ChatElement,
+    formatted: FormattedMessage,
+    contentHash: string
+  ): Promise<boolean> {
+    if (!this.chatId) return false;
+
+    try {
+      const parts = splitMessage(formatted.html);
+      const allMsgIds: number[] = [panelMsgId];
+
+      try {
+        await this.sendQueue.enqueue(
+          () => this.api.editMessageText(this.chatId!, panelMsgId, parts[0], {
+            parse_mode: 'HTML',
+            reply_markup: parts.length === 1 ? formatted.keyboard : undefined,
+          }),
+          'edit'
+        );
+      } catch (htmlErr) {
+        const htmlMsg = htmlErr instanceof Error ? htmlErr.message : String(htmlErr);
+        if (htmlMsg.includes('parse entities') || htmlMsg.includes('start tag')) {
+          await this.sendQueue.enqueue(
+            () => this.api.editMessageText(this.chatId!, panelMsgId, parts[0].replace(/<[^>]*>/g, ''), {
+              reply_markup: parts.length === 1 ? formatted.keyboard : undefined,
+            }),
+            'edit'
+          );
+        } else {
+          throw htmlErr;
+        }
+      }
+
+      for (let i = 1; i < parts.length; i++) {
+        const sent = await this.sendQueue.enqueue(
+          () => this.api.sendMessage(this.chatId!, parts[i], {
+            message_thread_id: threadId,
+            parse_mode: 'HTML',
+            reply_markup: i === parts.length - 1 ? formatted.keyboard : undefined,
+          }),
+          'send'
+        );
+        allMsgIds.push(sent.message_id);
+      }
+
+      this.messageTracker.track(threadId, element.id, allMsgIds, contentHash, element.type);
+      this.liveFeedMsgIds.delete(threadId);
+      this.lastLiveFeedHash.delete(threadId);
+      this.liveFeedTimestamps.delete(threadId);
+      this.saveLiveFeedState();
+
+      logTelegramOut('edit', threadId, 'panel→assistant', {
+        parts: parts.length,
+        msgId: panelMsgId,
+        chars: formatted.html.length,
+        elementId: element.id,
+      });
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[telegram] Panel→assistant failed: ${msg}`);
+      return false;
+    }
+  }
+
+  private async removeTrackedTelegramMessages(threadId: number, elementId: string): Promise<void> {
+    if (!this.chatId) return;
+    const tracked = this.messageTracker.getTracked(threadId, elementId);
+    if (!tracked?.telegramMsgIds.length) return;
+
+    for (const msgId of tracked.telegramMsgIds) {
+      if (!msgId) continue;
+      try {
+        await this.sendQueue.enqueue(
+          () => this.api.deleteMessage(this.chatId!, msgId),
+          'send'
+        );
+        logTelegramOut('delete', threadId, tracked.type, { msgId, elementId });
+      } catch { /* already gone */ }
+    }
+    this.messageTracker.untrack(threadId, elementId);
   }
 
   private async sendNewMessage(
@@ -1056,6 +1198,12 @@ export abstract class BaseTelegramTransport implements Transport {
       }
 
       this.messageTracker.track(threadId, element.id, msgIds, contentHash, element.type);
+      logTelegramOut('send', threadId, element.type, {
+        parts: parts.length,
+        msgId: msgIds[0],
+        chars: formatted.html.length,
+        elementId: element.id,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('thread not found') || msg.includes('chat not found')) {
@@ -1250,19 +1398,49 @@ export abstract class BaseTelegramTransport implements Transport {
           );
           console.log(`[telegram] Approval edited: id=${approval.id} thread=${threadId} desc="${approval.description.substring(0, 80)}"`);
         } else {
-          const sent = await this.sendQueue.enqueue(
-            () => this.api.sendMessage(this.chatId!, formatted.html, {
-              message_thread_id: threadId,
-              parse_mode: 'HTML',
-              reply_markup: formatted.keyboard,
-            }),
-            'send'
-          );
-          this.messageTracker.track(
-            threadId, trackId, [sent.message_id],
-            contentHash, 'approval'
-          );
-          console.log(`[telegram] Approval sent: id=${approval.id} thread=${threadId} msgId=${sent.message_id} desc="${approval.description.substring(0, 80)}"`);
+          const panelId = this.liveFeedMsgIds.get(threadId);
+          if (panelId) {
+            await this.sendQueue.enqueue(
+              () => this.api.editMessageText(this.chatId!, panelId, formatted.html, {
+                parse_mode: 'HTML',
+                reply_markup: formatted.keyboard,
+              }),
+              'edit'
+            );
+            this.lastLiveFeedHash.delete(threadId);
+            this.messageTracker.track(
+              threadId, trackId, [panelId],
+              contentHash, 'approval'
+            );
+            logTelegramOut('edit', threadId, 'panel→approval', {
+              msgId: panelId,
+              chars: formatted.html.length,
+            });
+            console.log(
+              `[telegram] Approval on panel: id=${approval.id} thread=${threadId} msgId=${panelId}`
+            );
+          } else {
+            const sent = await this.sendQueue.enqueue(
+              () => this.api.sendMessage(this.chatId!, formatted.html, {
+                message_thread_id: threadId,
+                parse_mode: 'HTML',
+                reply_markup: formatted.keyboard,
+              }),
+              'send'
+            );
+            this.liveFeedMsgIds.set(threadId, sent.message_id);
+            this.messageTracker.track(
+              threadId, trackId, [sent.message_id],
+              contentHash, 'approval'
+            );
+            logTelegramOut('send', threadId, 'approval', {
+              msgId: sent.message_id,
+              chars: formatted.html.length,
+            });
+            console.log(
+              `[telegram] Approval sent: id=${approval.id} thread=${threadId} msgId=${sent.message_id}`
+            );
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

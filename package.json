@@ -147,6 +147,11 @@
           "default": true,
           "markdownDescription": "While the agent is working, update one live status message in each topic instead of posting a new message for every tool/thought step."
         },
+        "cursorRemote.telegram.showTools": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Post tool step lines (reads, edits, shell) to Telegram. Off by default for a cleaner topic; the web client always shows full tool detail."
+        },
         "cursorRemote.telegram.photosEnabled": {
           "type": "boolean",
           "default": true,

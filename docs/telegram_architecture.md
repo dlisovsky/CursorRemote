@@ -137,6 +137,14 @@ The main class that implements the `Transport` interface.
 - `SendQueue` class (configured in `TelegramTransport`): serializes outbound `sendMessage` / `editMessageText` with **~300ms** between sends and **100ms** between edits (see `send-queue.ts` defaults vs. transport override)
 - `seenThreads` set: on first encounter with a thread, only last 5 messages are sent (older ones marked as "skipped" in tracker)
 
+**Compact Telegram dialog** (defaults):
+
+- **Inbound dedupe** — prompts sent from Telegram (voice/text/photo) are not echoed back as `You:` human rows from Cursor (`telegram-inbound-prompt.ts`).
+- **Tools off** — `TELEGRAM_SHOW_TOOLS=false` hides all tool step lines in topics; web client unchanged. Old tool messages are deleted on next sync.
+- **One assistant reply** — only the latest assistant message in the sync tail is posted; earlier assistant bubbles in the same turn are removed from Telegram.
+- **Thoughts** — never posted as separate messages (compact live feed only while agent is busy).
+- Audit outbound traffic via `[telegram-out]` in `temp/server.log`.
+
 **Compact live feed** (`TELEGRAM_COMPACT_LIVE`, default on):
 
 - When the agent is busy or recent messages include ephemeral rows (`isEphemeralElement`: loading tools, in-progress thoughts), `syncLiveFeedMessage` builds HTML via `formatLiveFeed` (activity line + up to 12 ephemeral elements) and **edits one Telegram message** per topic.
@@ -162,6 +170,12 @@ The main class that implements the `Transport` interface.
 - `handlePhotoMessage` / `handleImageDocumentMessage` download via `file-download.ts` → `data/image-cache/`.
 - Albums (`media_group_id`) batch in `PhotoAlbumCollector` (~800ms debounce) → one `processInboundPhotos` → `commandExecutor.sendPrompt({ text, imagePaths })`.
 - CDP attaches images via `DOM.setFileInputFiles` on composer file input, or paste fallback, then optional caption + Enter.
+
+**Quote replies** (inbound, Phase A):
+
+- Telegram `message.quote` (partial selection) or `reply_to_message` (full message) parsed in `telegram-quote.ts`.
+- Prompt format: `Regarding:\n\n«snippet»\n\n<user text>` via `buildPromptWithQuote` — text, voice (post-transcribe), and photo captions.
+- Phase B (future): native composer blockquote via CDP discover.
 
 **State subscription**:
 - `stateManager.on('state:patch', this.onStatePatch)`
