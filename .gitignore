@@ -1,16 +1,7 @@
 node_modules/
-.claude/
 dist/
-*.js.map
-.env
-
+tma/dist/
 data/
-data/voice-cache/
-releases/
-temp/server.log
-tmp/
-scripts/generate-keys.ts
-azure_token
-openvsx_token
-# marketing/
-.specstory/
+.env
+*.db
+.DS_Store
