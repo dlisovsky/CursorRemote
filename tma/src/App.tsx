@@ -4,7 +4,7 @@ import { IconAlertCircle } from "@tabler/icons-react";
 import { login } from "./api.js";
 import { ProjectsPage } from "./pages/Projects.js";
 import { AgentChatPage } from "./pages/AgentChat.js";
-import { useTelegramApp } from "./useTelegramApp.js";
+import { isTelegramWebApp, useTelegramApp } from "./useTelegramApp.js";
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -46,10 +46,18 @@ export function App() {
     return <AgentChatPage agentId={agentId} onBack={() => setAgentId(null)} />;
   }
 
+  const inTelegram = isTelegramWebApp();
+
   return (
-    <Container py="md" px="md" size="sm" pb="calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom))">
+    <Container
+      py="md"
+      px="md"
+      size="sm"
+      pt={inTelegram ? "calc(var(--mantine-spacing-md) + var(--tg-safe-top))" : "md"}
+      pb="calc(var(--mantine-spacing-md) + var(--tg-safe-bottom))"
+    >
       <Stack gap="lg">
-        <Title order={3} c="dimmed" fw={500}>
+        <Title order={inTelegram ? 4 : 3} fw={500}>
           Your projects
         </Title>
         <ProjectsPage onOpenAgent={setAgentId} />

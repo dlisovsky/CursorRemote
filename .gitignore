@@ -2,6 +2,7 @@ node_modules/
 dist/
 tma/dist/
 data/
+.cursor-remote/
 .env
 *.db
 .DS_Store

@@ -3,6 +3,10 @@ import { useEffect } from "react";
 interface TelegramWebApp {
   ready?: () => void;
   expand?: () => void;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
+  safeAreaInset?: { top: number; bottom: number; left: number; right: number };
+  contentSafeAreaInset?: { top: number; bottom: number; left: number; right: number };
   BackButton?: {
     show: () => void;
     hide: () => void;
@@ -28,18 +32,49 @@ function getTg(): TelegramWebApp | undefined {
   return (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
 }
 
+/** True when opened inside Telegram (not Chrome mock dev). */
+export function isTelegramWebApp(): boolean {
+  if (import.meta.env.VITE_MOCK_TG === "true") return false;
+  const initData = (getTg() as { initData?: string } | undefined)?.initData?.trim() ?? "";
+  return initData.length > 0;
+}
+
+const TG_BG = "#1a1b1e";
+
 export function useTelegramApp(): void {
   useEffect(() => {
     const tg = getTg();
-    tg?.ready?.();
-    tg?.expand?.();
+    if (!tg) return;
+    tg.ready?.();
+    tg.expand?.();
+    tg.setHeaderColor?.(TG_BG);
+    tg.setBackgroundColor?.(TG_BG);
+
+    const inset = tg.contentSafeAreaInset ?? tg.safeAreaInset;
+    if (inset) {
+      const root = document.documentElement;
+      root.style.setProperty("--tg-safe-top", `${inset.top}px`);
+      root.style.setProperty("--tg-safe-bottom", `${inset.bottom}px`);
+    }
   }, []);
+}
+
+/** Bottom padding when Telegram MainButton is visible (px). */
+export function useTelegramMainButtonInset(visible: boolean): void {
+  useEffect(() => {
+    if (!isTelegramWebApp()) return;
+    document.documentElement.style.setProperty("--tg-main-button", visible ? "54px" : "0px");
+    return () => {
+      document.documentElement.style.removeProperty("--tg-main-button");
+    };
+  }, [visible]);
 }
 
 export function useTelegramMainButton(
   options: { text: string; visible: boolean; enabled?: boolean; onClick: () => void } | null,
 ): void {
   useEffect(() => {
+    if (!isTelegramWebApp()) return;
     const btn = getTg()?.MainButton;
     if (!btn || !options?.visible) {
       btn?.hide?.();
@@ -60,8 +95,8 @@ export function useTelegramMainButton(
 
 export function useTelegramBackButton(onBack: (() => void) | null): void {
   useEffect(() => {
-    const tg = getTg();
-    const btn = tg?.BackButton;
+    if (!isTelegramWebApp()) return;
+    const btn = getTg()?.BackButton;
     if (!btn || !onBack) {
       btn?.hide?.();
       return;

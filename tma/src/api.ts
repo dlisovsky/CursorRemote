@@ -52,11 +52,36 @@ export function fetchAgentHistory(agentId: string): Promise<{ events: import("..
   return api(`/agents/${agentId}/history`);
 }
 
-export function sendPrompt(agentId: string, text: string): Promise<SendResponse> {
+export interface OutgoingAttachment {
+  name: string;
+  mime: string;
+  data: string;
+}
+
+export function sendPrompt(
+  agentId: string,
+  text: string,
+  attachments?: OutgoingAttachment[],
+): Promise<SendResponse> {
   return api(`/agents/${agentId}/send`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, attachments: attachments ?? [] }),
   });
+}
+
+export function transcribeVoice(
+  agentId: string,
+  audio: string,
+  mime: string,
+): Promise<{ text: string; language: string; durationMs: number }> {
+  return api(`/agents/${agentId}/transcribe`, {
+    method: "POST",
+    body: JSON.stringify({ audio, mime }),
+  });
+}
+
+export function attachmentUrl(agentId: string, fileId: string): string {
+  return `/agents/${agentId}/files/${fileId}`;
 }
 
 export function cancelRun(agentId: string, runId: string): Promise<void> {

@@ -1,5 +1,11 @@
+export interface ChatImage {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export type ChatItem =
-  | { kind: "user"; id: string; text: string; queued?: boolean }
+  | { kind: "user"; id: string; text: string; queued?: boolean; images?: ChatImage[] }
   | { kind: "assistant"; id: string; text: string; streaming?: boolean; cancelled?: boolean }
   | {
       kind: "tool";

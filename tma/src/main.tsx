@@ -8,6 +8,7 @@ import "@fontsource/geist-sans/500.css";
 import "@fontsource/geist-sans/600.css";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
+import "./tma.css";
 import { App } from "./App";
 
 const theme = createTheme({
@@ -21,7 +22,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="dark">
       <ModalsProvider>
-        <Notifications position="top-center" limit={3} />
+        <Notifications position="top-center" limit={2} zIndex={1000} />
         <App />
       </ModalsProvider>
     </MantineProvider>

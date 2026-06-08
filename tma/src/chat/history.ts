@@ -3,7 +3,10 @@ import type { ChatItem } from "./types.js";
 import { toolDetail } from "./types.js";
 
 /** Rebuild chat items from persisted wire events (no live streaming state). */
-export function chatItemsFromHistory(events: WireMessage[]): ChatItem[] {
+export function chatItemsFromHistory(
+  events: WireMessage[],
+  attachmentUrlFn?: (fileId: string) => string,
+): ChatItem[] {
   const items: ChatItem[] = [];
   let toolSeq = 0;
 
@@ -14,6 +17,11 @@ export function chatItemsFromHistory(events: WireMessage[]): ChatItem[] {
         id: `h-u-${event.runId}`,
         text: event.text,
         queued: event.queued,
+        images: event.images?.map((img) => ({
+          id: img.id,
+          name: img.name,
+          url: attachmentUrlFn ? attachmentUrlFn(img.id) : "",
+        })),
       });
       continue;
     }

@@ -46,8 +46,15 @@ export interface QueueItem {
   position: number;
 }
 
+export interface UserAttachmentMeta {
+  id: string;
+  name: string;
+  mime: string;
+  path: string;
+}
+
 export type WireMessage =
-  | { type: "user_message"; runId: string; text: string; queued?: boolean }
+  | { type: "user_message"; runId: string; text: string; queued?: boolean; images?: UserAttachmentMeta[] }
   | { type: "assistant_delta"; runId: string; text: string }
   | { type: "assistant_complete"; runId: string; text: string }
   | { type: "thinking"; runId: string; duration?: number }

@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Group,
+  Image,
   Paper,
   ScrollArea,
   Stack,
@@ -20,6 +21,9 @@ import {
   IconAlertCircle,
   IconArrowLeft,
   IconBrain,
+  IconCamera,
+  IconMicrophone,
+  IconPhoto,
   IconPlayerStop,
   IconSend,
 } from "@tabler/icons-react";
@@ -35,24 +39,41 @@ import { ToolCallCard } from "../chat/ToolCallCard.js";
 import type { ChatItem } from "../chat/types.js";
 import { toolDetail } from "../chat/types.js";
 import {
+  attachmentUrl,
   cancelQueuedItem,
   cancelRun,
   fetchAgent,
   fetchAgentHistory,
   forceSendQueued,
   sendPrompt,
+  transcribeVoice,
   type AgentDetail,
+  type OutgoingAttachment,
 } from "../api.js";
+import { AttachmentPreview, type PendingAttachment } from "../chat/AttachmentPreview.js";
+import { AuthImage } from "../chat/AuthImage.js";
+import { useVoiceRecorder } from "../hooks/useVoiceRecorder.js";
 import { chatItemsFromHistory } from "../chat/history.js";
 import { MarkdownText } from "../chat/MarkdownText.js";
 import { agentStatusColor, runStatusLabel } from "../status.js";
 import { connectAgentStream } from "../stream.js";
-import { useTelegramBackButton, useTelegramMainButton } from "../useTelegramApp.js";
+import {
+  isTelegramWebApp,
+  useTelegramBackButton,
+  useTelegramMainButton,
+  useTelegramMainButtonInset,
+} from "../useTelegramApp.js";
 
 export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: () => void }) {
+  const inTelegram = isTelegramWebApp();
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [transcribing, setTranscribing] = useState(false);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const { recording, toggle: toggleRecording, stop: stopRecording } = useVoiceRecorder();
   const [status, setStatus] = useState<AgentStatus | "finished" | "cancelled">("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -63,7 +84,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
   const toolSeq = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useTelegramBackButton(onBack);
+  useTelegramBackButton(inTelegram ? onBack : null);
 
   const refreshAgent = useCallback(() => {
     void fetchAgent(agentId)
@@ -83,7 +104,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
 
   useEffect(() => {
     void fetchAgentHistory(agentId).then(({ events }) => {
-      const historical = chatItemsFromHistory(events);
+      const historical = chatItemsFromHistory(events, (fileId) => attachmentUrl(agentId, fileId));
       if (historical.length > 0) setItems(historical);
     });
   }, [agentId]);
@@ -99,6 +120,11 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
             id: `u-${event.runId}`,
             text: event.text,
             queued: event.queued,
+            images: event.images?.map((img) => ({
+              id: img.id,
+              name: img.name,
+              url: attachmentUrl(agentId, img.id),
+            })),
           },
         ];
       });
@@ -232,7 +258,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       ]);
       notifications.show({ title: "Agent error", message: event.message, color: "red" });
     }
-  }, []);
+  }, [agentId]);
 
   useEffect(() => {
     const disconnect = connectAgentStream(agentId, handleWireEvent);
@@ -254,18 +280,39 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     return "Working…";
   }, [isRunning, activeToolName, thinkingActive, isStreaming]);
 
+  const canSend = Boolean(text.trim()) || attachments.length > 0;
+
   const onSend = useCallback(async () => {
     const prompt = text.trim();
-    if (!prompt || sending) return;
+    if ((!prompt && attachments.length === 0) || sending) return;
 
     const userId = `u-${Date.now()}`;
+    const displayText = prompt || `📷 ${attachments.length} image(s)`;
+    const outgoing: OutgoingAttachment[] = attachments.map((a) => ({
+      name: a.name,
+      mime: a.mime,
+      data: a.data,
+    }));
+    const previewImages = attachments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      url: a.previewUrl,
+    }));
+
     setText("");
-    setItems((prev) => [...prev, { kind: "user", id: userId, text: prompt }]);
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+      return [];
+    });
+    setItems((prev) => [
+      ...prev,
+      { kind: "user", id: userId, text: displayText, images: previewImages },
+    ]);
     assistantBuf.current = "";
     setSending(true);
 
     try {
-      const res = await sendPrompt(agentId, prompt);
+      const res = await sendPrompt(agentId, prompt, outgoing);
       if (res.queued) {
         setItems((prev) =>
           prev.map((x) => (x.id === userId && x.kind === "user" ? { ...x, queued: true } : x)),
@@ -285,7 +332,107 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     } finally {
       setSending(false);
     }
-  }, [agentId, sending, text]);
+  }, [agentId, attachments, sending, text]);
+
+  const onVoice = useCallback(async () => {
+    if (transcribing) return;
+    if (!recording) {
+      try {
+        await toggleRecording();
+      } catch {
+        notifications.show({
+          title: "Microphone blocked",
+          message: "Allow microphone access to dictate prompts.",
+          color: "red",
+        });
+      }
+      return;
+    }
+
+    const blob = await stopRecording();
+    if (!blob) return;
+
+    setTranscribing(true);
+    try {
+      const base64 = await blobToBase64(blob);
+      const result = await transcribeVoice(agentId, base64, blob.type || "audio/webm");
+      setText((prev) => (prev ? `${prev} ${result.text}` : result.text));
+      notifications.show({
+        title: "Transcribed",
+        message: result.text.slice(0, 120),
+        color: "teal",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notifications.show({ title: "Transcription failed", message, color: "red" });
+    } finally {
+      setTranscribing(false);
+    }
+  }, [agentId, recording, stopRecording, toggleRecording, transcribing]);
+
+  const MAX_ATTACHMENTS = 4;
+
+  const addAttachment = useCallback((file: File) => {
+    setAttachments((prev) => {
+      if (prev.length >= MAX_ATTACHMENTS) {
+        notifications.show({
+          title: "Attachment limit",
+          message: `Maximum ${MAX_ATTACHMENTS} images per message.`,
+          color: "orange",
+        });
+        return prev;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = String(reader.result ?? "");
+        const data = raw.includes(",") ? raw.split(",")[1]! : raw;
+        const previewUrl = URL.createObjectURL(file);
+        const name = file.name || `pasted-${Date.now()}.jpg`;
+        setAttachments((current) => {
+          if (current.length >= MAX_ATTACHMENTS) return current;
+          return [
+            ...current,
+            {
+              id: crypto.randomUUID(),
+              name,
+              mime: file.type || "image/jpeg",
+              previewUrl,
+              data,
+            },
+          ];
+        });
+      };
+      reader.readAsDataURL(file);
+      return prev;
+    });
+  }, []);
+
+  const onPhotoSelected = useCallback(
+    (file: File | null) => {
+      if (file) addAttachment(file);
+    },
+    [addAttachment],
+  );
+
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const images: File[] = [];
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) images.push(file);
+        }
+      }
+      if (images.length === 0) return;
+
+      e.preventDefault();
+      for (const file of images) addAttachment(file);
+    },
+    [addAttachment],
+  );
 
   const onStop = useCallback(async () => {
     const id = runId ?? agent?.activeRunId;
@@ -300,13 +447,14 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
   }, [agent?.activeRunId, agentId, runId]);
 
   const mainButtonText = isRunning ? "Stop generating" : "Send";
-  const mainButtonVisible = isRunning || Boolean(text.trim());
+  const mainButtonVisible = inTelegram && (isRunning || canSend);
+  useTelegramMainButtonInset(mainButtonVisible);
   useTelegramMainButton(
     mainButtonVisible
       ? {
           text: mainButtonText,
           visible: true,
-          enabled: isRunning || Boolean(text.trim()) && !sending,
+          enabled: (isRunning || canSend) && !sending && !transcribing,
           onClick: () => void (isRunning ? onStop() : onSend()),
         }
       : null,
@@ -348,40 +496,45 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
 
   return (
     <AppShell
-      header={{ height: 56 }}
+      header={{ height: inTelegram ? 48 : 56 }}
       footer={{ height: "auto" }}
       padding={0}
       styles={{
         main: { display: "flex", flexDirection: "column", height: "100dvh" },
+        header: inTelegram
+          ? { paddingTop: "var(--tg-safe-top)", background: "var(--mantine-color-body)" }
+          : undefined,
         footer: {
-          paddingBottom: "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom))",
+          paddingBottom:
+            "calc(var(--mantine-spacing-sm) + var(--tg-safe-bottom) + var(--tg-main-button))",
+          background: "var(--mantine-color-body)",
+          borderTop: "1px solid var(--mantine-color-default-border)",
         },
       }}
     >
-      <AppShell.Header px="md">
-        <Group h="100%" justify="space-between" wrap="nowrap">
+      <AppShell.Header px={inTelegram ? "sm" : "md"}>
+        <Group h="100%" justify="space-between" wrap="nowrap" gap="sm">
           <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-            <ActionIcon
-              size={44}
-              variant="subtle"
-              color="gray"
-              onClick={onBack}
-              aria-label="Back"
-            >
-              <IconArrowLeft size={20} />
-            </ActionIcon>
+            {!inTelegram && (
+              <ActionIcon size={44} variant="subtle" color="gray" onClick={onBack} aria-label="Back">
+                <IconArrowLeft size={20} />
+              </ActionIcon>
+            )}
             <div style={{ minWidth: 0 }}>
               <Title order={5} lineClamp={1}>
                 {agent?.title ?? "Agent"}
               </Title>
-              <Text c="dimmed" size="xs" lineClamp={1}>
-                {agent ? DEFAULT_CURSOR_MODEL : "Loading…"}
-              </Text>
+              {!inTelegram && (
+                <Text c="dimmed" size="xs" lineClamp={1}>
+                  {agent ? DEFAULT_CURSOR_MODEL : "Loading…"}
+                </Text>
+              )}
             </div>
           </Group>
           <Badge
             color={agentStatusColor(isRunning ? "running" : (agent?.status ?? "idle"))}
             variant={isRunning ? "filled" : "light"}
+            size={inTelegram ? "md" : "sm"}
           >
             {runStatusLabel(isRunning ? "running" : (agent?.status ?? status))}
           </Badge>
@@ -410,9 +563,9 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
         </ScrollArea>
       </AppShell.Main>
 
-      <AppShell.Footer p="md" pt="xs" withBorder>
+      <AppShell.Footer p={inTelegram ? "sm" : "md"} pt="xs" withBorder={!inTelegram}>
         <Stack gap="sm">
-          {isRunning && (
+          {isRunning && !inTelegram && (
             <Button
               fullWidth
               color="red"
@@ -425,11 +578,74 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
             </Button>
           )}
           <QueuePanel items={queue} onForceSend={confirmForceSend} onCancel={onCancelQueued} />
+          <AttachmentPreview
+            items={attachments}
+            onRemove={(id) =>
+              setAttachments((prev) => {
+                const item = prev.find((x) => x.id === id);
+                if (item) URL.revokeObjectURL(item.previewUrl);
+                return prev.filter((x) => x.id !== id);
+              })
+            }
+          />
           <Group align="flex-end" gap="sm" wrap="nowrap">
+            <ActionIcon
+              size={44}
+              radius="xl"
+              variant={recording ? "filled" : "light"}
+              color={recording ? "red" : "gray"}
+              loading={transcribing}
+              onClick={() => void onVoice()}
+              aria-label={recording ? "Stop recording" : "Voice input"}
+            >
+              <IconMicrophone size={20} />
+            </ActionIcon>
+            <ActionIcon
+              size={44}
+              radius="xl"
+              variant="light"
+              color="gray"
+              onClick={() => libraryInputRef.current?.click()}
+              aria-label="Choose from photo library"
+            >
+              <IconPhoto size={20} />
+            </ActionIcon>
+            <ActionIcon
+              size={44}
+              radius="xl"
+              variant="light"
+              color="gray"
+              onClick={() => cameraInputRef.current?.click()}
+              aria-label="Take photo"
+            >
+              <IconCamera size={20} />
+            </ActionIcon>
+            <input
+              ref={libraryInputRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                onPhotoSelected(e.currentTarget.files?.[0] ?? null);
+                e.currentTarget.value = "";
+              }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                onPhotoSelected(e.currentTarget.files?.[0] ?? null);
+                e.currentTarget.value = "";
+              }}
+            />
             <Textarea
               placeholder={composerPlaceholder}
               value={text}
               onChange={(e) => setText(e.currentTarget.value)}
+              onPaste={onPaste}
               autosize
               minRows={1}
               maxRows={6}
@@ -441,18 +657,20 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
                 }
               }}
             />
-            <ActionIcon
-              size={44}
-              radius="xl"
-              variant="filled"
-              color="teal"
-              loading={sending}
-              disabled={!text.trim()}
-              onClick={() => void onSend()}
-              aria-label={isRunning ? "Add to queue" : "Send"}
-            >
-              <IconSend size={20} />
-            </ActionIcon>
+            {!inTelegram && (
+              <ActionIcon
+                size={44}
+                radius="xl"
+                variant="filled"
+                color="teal"
+                loading={sending}
+                disabled={!canSend}
+                onClick={() => void onSend()}
+                aria-label={isRunning ? "Add to queue" : "Send"}
+              >
+                <IconSend size={20} />
+              </ActionIcon>
+            )}
           </Group>
         </Stack>
       </AppShell.Footer>
@@ -498,6 +716,17 @@ function ChatItemView({ item }: { item: ChatItem }) {
             Queued
           </Badge>
         )}
+        {isUser && item.kind === "user" && item.images && item.images.length > 0 && (
+          <Group gap="xs" mb={item.text ? 6 : 0}>
+            {item.images.map((img) =>
+              img.url.startsWith("blob:") ? (
+                <Image key={img.id} src={img.url} alt={img.name} w={96} h={96} fit="cover" radius="sm" />
+              ) : (
+                <AuthImage key={img.id} src={img.url} alt={img.name} w={96} h={96} />
+              ),
+            )}
+          </Group>
+        )}
         {item.kind === "assistant" && !item.streaming ? (
           <MarkdownText text={item.text} />
         ) : (
@@ -518,4 +747,16 @@ function ChatItemView({ item }: { item: ChatItem }) {
       </Paper>
     </Box>
   );
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = String(reader.result ?? "");
+      resolve(raw.includes(",") ? raw.split(",")[1]! : raw);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }

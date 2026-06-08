@@ -94,6 +94,9 @@ e2e/        Playwright smoke tests
 - Stop run, prompt queue, force-send, cancel queued
 - Chat history replay on page reload
 
-## Deferred (v2)
+## Voice & photos
 
-See `TODOS.md` — voice transcription and photo attachments.
+- **Microphone** — tap to record, tap again to transcribe (local faster-whisper) into the composer
+- **Camera** — attach screenshots; saved under `{project}/.cursor-remote/inbox/` and included in the agent prompt
+
+Requires `pip install faster-whisper` and `TRANSCRIBE_MODEL` in `.env`. Disable with `VOICE_ENABLED=false` or `PHOTOS_ENABLED=false`.

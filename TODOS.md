@@ -1,16 +1,13 @@
 # TODOS
 
-## Voice message + photo attachment support (v2)
+## Voice message + photo attachment support — **shipped**
 
-**What:** Add voice recording and photo/screenshot attachment to the TMA composer.
+- TMA composer: microphone (record → faster-whisper transcription) and camera/photo picker
+- Backend: `POST /agents/:id/transcribe`, attachments on `POST /agents/:id/send`
+- Images saved to `{project}/.cursor-remote/inbox/` and referenced in the SDK prompt
+- Configure via `.env`: `TRANSCRIBE_MODEL`, `TRANSCRIBE_LANGUAGES`, `VOICE_ENABLED`, `PHOTOS_ENABLED`
 
-**Why:** Natural mobile interaction -- speak your prompt while walking, snap a screenshot
-of a bug. The prior CursorRemote had voice transcription (Whisper-based). The SDK's
-`agent.send()` likely accepts text only -- voice needs transcription on the backend
-before sending to SDK. Photos may need to be encoded as base64 or uploaded to a URL
-the agent can access.
+## Future ideas
 
-**Prior art:** Commits on `feature/upds` branch show "Enhance voice transcription and
-live feed management" -- transcription pipeline existed in the CDP era.
-
-**Depends on:** Wedge shipping, SDK multimodal/attachment support.
+- Cloud agent runtime (`Agent.create({ cloud })`) for phone control when laptop sleeps
+- File diff viewer in run detail
