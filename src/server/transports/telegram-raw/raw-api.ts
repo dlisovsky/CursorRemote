@@ -30,11 +30,15 @@ export class RawTelegramApiClient implements TelegramApiClient {
     message_thread_id?: number;
     parse_mode?: string;
     reply_markup?: TgKeyboard;
+    reply_to_message_id?: number;
   }): Promise<{ message_id: number }> {
     const body: Record<string, unknown> = { chat_id: chatId, text };
     if (options?.message_thread_id != null) body.message_thread_id = options.message_thread_id;
     if (options?.parse_mode) body.parse_mode = options.parse_mode;
     if (options?.reply_markup) body.reply_markup = options.reply_markup;
+    if (options?.reply_to_message_id != null) {
+      body.reply_parameters = { message_id: options.reply_to_message_id, allow_sending_without_reply: true };
+    }
     const result = await this.call<{ message_id: number }>('sendMessage', body);
     // Trace every send so we can prove which thread(s) a duplicate landed in.
     const preview = text.replace(/\s+/g, ' ').slice(0, 60);

@@ -30,6 +30,10 @@ export interface WindowSnapshot {
   agentActivityLive: boolean;
   agentActivitySource: CursorState['agentActivitySource'];
   composerQueue: ComposerQueueState;
+  /** Agent questionnaire widget (multiple-choice), mirrored for the turn renderer. */
+  questionnaire: CursorState['questionnaire'];
+  /** Composer accepts input (agent not busy) — used by the turn renderer's done-detection. */
+  inputAvailable: boolean;
   mode: ModeInfo;
   model: ModelInfo;
   lastUpdated: number;
@@ -41,6 +45,8 @@ export interface WindowSnapshot {
 }
 
 const CYCLE_INTERVAL_MS = 10000;
+/** Fast re-poll interval for windows with an active turn (A1 dynamic boost). */
+const BOOST_INTERVAL_MS = 1200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -125,6 +131,11 @@ export class WindowMonitor extends EventEmitter {
   private snapshots = new Map<string, WindowSnapshot>();
   private homeWindowId: string | null = null;
   private cycleTimer: ReturnType<typeof setInterval> | null = null;
+  /** windowId → expiry ms; background windows polled at BOOST_INTERVAL_MS while a turn is live (A1). */
+  private boostedWindows = new Map<string, number>();
+  private boostTimer: ReturnType<typeof setInterval> | null = null;
+  /** Prevents overlapping polls of the same window between the cycle and boost loops. */
+  private pollInflight = new Set<string>();
   private _cycling = false;
   private _firstCycleLogged = false;
   private switchGeneration = -1;
@@ -157,7 +168,8 @@ export class WindowMonitor extends EventEmitter {
     this.cdpBridge.on('connected', this.onConnected);
 
     this.cycleTimer = setInterval(() => this.cycle(), CYCLE_INTERVAL_MS);
-    console.log(`[window-monitor] Started (parallel mode, cycle every ${CYCLE_INTERVAL_MS / 1000}s)`);
+    this.boostTimer = setInterval(() => { void this.boostCycle(); }, BOOST_INTERVAL_MS);
+    console.log(`[window-monitor] Started (parallel mode, cycle every ${CYCLE_INTERVAL_MS / 1000}s, boost every ${BOOST_INTERVAL_MS}ms)`);
   }
 
   stop(): void {
@@ -167,6 +179,44 @@ export class WindowMonitor extends EventEmitter {
       clearInterval(this.cycleTimer);
       this.cycleTimer = null;
     }
+    if (this.boostTimer) {
+      clearInterval(this.boostTimer);
+      this.boostTimer = null;
+    }
+  }
+
+  /**
+   * Poll-boost a background window (A1): while a Telegram topic has a live turn,
+   * its window is re-polled every BOOST_INTERVAL_MS instead of waiting for the
+   * 10s cycle, so streaming stays smooth across topics. No-op for the home
+   * window (already polled continuously via state patches).
+   */
+  boostWindow(windowId: string, ttlMs = 8000): void {
+    if (!windowId || windowId === this.getHomeWindowId()) return;
+    this.boostedWindows.set(windowId, Date.now() + ttlMs);
+  }
+
+  clearBoost(windowId: string): void {
+    this.boostedWindows.delete(windowId);
+  }
+
+  private async boostCycle(): Promise<void> {
+    if (!this.cdpBridge.isConnected()) return;
+    const now = Date.now();
+    const homeId = this.getHomeWindowId();
+    const due: string[] = [];
+    for (const [windowId, expiry] of this.boostedWindows) {
+      if (expiry <= now) { this.boostedWindows.delete(windowId); continue; }
+      if (windowId === homeId) continue;
+      if (this.pollInflight.has(windowId)) continue;
+      due.push(windowId);
+    }
+    if (due.length === 0) return;
+    const windows = this.cdpBridge.windows;
+    await Promise.all(due.map(id => {
+      const win = windows.find(w => w.id === id);
+      return win?.wsUrl ? this.pollWindowParallel(win) : Promise.resolve();
+    }));
   }
 
   setHomeWindow(windowId: string): void {
@@ -234,6 +284,8 @@ export class WindowMonitor extends EventEmitter {
       agentActivityLive: state.agentActivityLive,
       agentActivitySource: state.agentActivitySource,
       composerQueue: state.composerQueue,
+      questionnaire: state.questionnaire,
+      inputAvailable: state.inputAvailable,
       mode: state.mode,
       model: state.model,
       lastUpdated: Date.now(),
@@ -324,6 +376,8 @@ export class WindowMonitor extends EventEmitter {
 
   private async pollWindowParallel(win: CursorWindow): Promise<void> {
     if (!win.wsUrl) return;
+    if (this.pollInflight.has(win.id)) return;
+    this.pollInflight.add(win.id);
 
     const client = new CdpClient();
     try {
@@ -351,6 +405,8 @@ export class WindowMonitor extends EventEmitter {
           agentActivityLive: state.agentActivityLive,
           agentActivitySource: state.agentActivitySource,
           composerQueue: state.composerQueue,
+          questionnaire: state.questionnaire,
+          inputAvailable: state.inputAvailable,
           mode: state.mode,
           model: state.model,
           lastUpdated: Date.now(),
@@ -389,6 +445,7 @@ export class WindowMonitor extends EventEmitter {
         console.warn(`[window-monitor] Poll "${win.title}" failed: ${msg}`);
       }
     } finally {
+      this.pollInflight.delete(win.id);
       client.disconnect();
     }
   }

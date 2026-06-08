@@ -28,6 +28,7 @@ import {
   type TelegramQuoteSource,
 } from './telegram-quote.js';
 import { recordTelegramInboundPrompt } from './telegram-inbound-prompt.js';
+import type { TurnRendererManager } from './turn-renderer/turn-manager.js';
 
 function quoteSourceFromMessage(msg: BotContext['message']): TelegramQuoteSource | undefined {
   if (!msg?.quote && !msg?.reply_to_message) return undefined;
@@ -69,7 +70,9 @@ export interface CommandDeps {
     html: string,
     reuseMessageId?: number
   ) => Promise<void>;
-  clearPromptStatusMessage: (threadId: number) => Promise<void>;
+  clearPromptStatusMessage: (threadId: number) => void | Promise<void>;
+  /** Active turn renderer when TELEGRAM_TURN_RENDERER is on (lazily resolved). */
+  getTurnManager?: () => TurnRendererManager | undefined;
 }
 
 export interface RegisterDeps {
@@ -1140,7 +1143,8 @@ export function parseCallbackData(data: string): { action: string; id: string; h
   }
 
   // Questionnaire / queue actions carry only a hash: `qan:<hash>`, `qsf:<hash>`, …
-  if (action === 'qan' || action === 'qsk' || action === 'qco' || action === 'qsf' || action === 'qcn') {
+  // `qfo` is the freeform "Other" option from the turn renderer (same shape).
+  if (action === 'qan' || action === 'qsk' || action === 'qco' || action === 'qsf' || action === 'qcn' || action === 'qfo') {
     return { action, id: '', hash: rest };
   }
 
@@ -1170,6 +1174,10 @@ export async function handleCallbackQuery(ctx: BotContext, deps: CommandDeps): P
         return;
       }
       const result = await deps.commandExecutor.stopGeneration(commandId);
+      if (result.ok) {
+        const threadId = getThreadIdFromContext(ctx);
+        if (threadId !== undefined) deps.getTurnManager?.()?.markStopped(threadId);
+      }
       await ctx.answerCallbackQuery({
         text: result.ok ? 'Stopping agent…' : `Error: ${result.error}`,
       });
@@ -1326,6 +1334,35 @@ export async function handleCallbackQuery(ctx: BotContext, deps: CommandDeps): P
       return;
     }
 
+    // Freeform "Other" — arm the topic so the user's next message becomes the
+    // answer (C1 explicit armed state). We click the option now to focus Cursor's
+    // freeform field, then capture the reply text in handleTextMessage.
+    if (action === 'qfo') {
+      const manager = deps.getTurnManager?.();
+      const threadId = getThreadIdFromContext(ctx);
+      if (!manager || threadId === undefined) {
+        await ctx.answerCallbackQuery({ text: 'Freeform not available.' });
+        return;
+      }
+      const selector = deps.messageTracker.resolveHash(hash);
+      if (!selector) {
+        await ctx.answerCallbackQuery({ text: 'Action expired.' });
+        return;
+      }
+      if (!(await ensureTopicWindow(ctx, deps))) {
+        await ctx.answerCallbackQuery({ text: 'Failed to switch window' });
+        return;
+      }
+      await deps.commandExecutor.clickAction(commandId, selector);
+      manager.armFreeform(threadId, selector);
+      await ctx.answerCallbackQuery({ text: '✍️ Reply with your answer' });
+      await ctx.reply('✍️ <i>Reply with your custom answer for this question.</i>', {
+        message_thread_id: threadId,
+        parse_mode: 'HTML',
+      });
+      return;
+    }
+
     if (!(await ensureTopicWindow(ctx, deps))) {
       await ctx.answerCallbackQuery({ text: 'Failed to switch window' });
       return;
@@ -1377,18 +1414,27 @@ export async function sendPromptToMappedAgent(
   deps: CommandDeps,
   text: string,
   imagePaths: string[] = [],
-  opts?: { reusePromptStatusMessageId?: number }
+  opts?: { reusePromptStatusMessageId?: number; skipTurnStart?: boolean }
 ): Promise<boolean> {
   const threadId = ctx.message?.message_thread_id;
   if (!threadId) return false;
 
   recordTelegramInboundPrompt(threadId, text);
 
-  await deps.upsertPromptStatusMessage(
-    threadId,
-    '<i>⏳ Sending to Cursor…</i>',
-    opts?.reusePromptStatusMessageId
-  );
+  // Turn renderer owns the live panel: open it immediately (replying to the
+  // user's message) and skip the legacy "Sending…" prompt-status bubble.
+  const manager = deps.getTurnManager?.();
+  if (manager) {
+    if (!opts?.skipTurnStart) {
+      await manager.beginTelegramTurn(threadId, text, ctx.message?.message_id);
+    }
+  } else {
+    await deps.upsertPromptStatusMessage(
+      threadId,
+      '<i>⏳ Sending to Cursor…</i>',
+      opts?.reusePromptStatusMessageId
+    );
+  }
 
   const mapping = deps.topicManager.resolveThread(threadId);
   if (!mapping) {
@@ -1450,11 +1496,13 @@ export async function sendPromptToMappedAgent(
     await ctx.reply(`⚠️ Failed to send: ${result.error}`);
     return false;
   }
-  await deps.upsertPromptStatusMessage(
-    threadId,
-    formatInboundPromptStatus(text),
-    opts?.reusePromptStatusMessageId
-  );
+  if (!manager) {
+    await deps.upsertPromptStatusMessage(
+      threadId,
+      formatInboundPromptStatus(text),
+      opts?.reusePromptStatusMessageId
+    );
+  }
   return true;
 }
 
@@ -1650,10 +1698,22 @@ export async function handleImageDocumentMessage(
 }
 
 export async function handleTextMessage(ctx: BotContext, deps: CommandDeps): Promise<void> {
-  if (!ctx.message?.message_thread_id) return;
-  const text = ctx.message.text ?? '';
-  const prompt = promptFromTelegramMessage(text, ctx.message);
+  const msg = ctx.message;
+  const threadId = msg?.message_thread_id;
+  if (!msg || !threadId) return;
+  const text = msg.text ?? '';
+  const prompt = promptFromTelegramMessage(text, msg);
   if (!prompt.trim()) return;
+
+  // Freeform "Other" answer (C1): the user previously tapped Other; this reply
+  // is the custom answer. Submit it into the current turn (no new turn).
+  const manager = deps.getTurnManager?.();
+  if (manager?.isFreeformArmed(threadId)) {
+    manager.consumeFreeform(threadId);
+    await sendPromptToMappedAgent(ctx, deps, prompt, [], { skipTurnStart: true });
+    return;
+  }
+
   await sendPromptToMappedAgent(ctx, deps, prompt);
 }
 

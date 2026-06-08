@@ -19,8 +19,13 @@ import {
 
 function grammyApiAdapter(bot: Bot): TelegramApiClient {
   return {
-    sendMessage: (chatId, text, opts) =>
-      bot.api.sendMessage(chatId, text, opts as Parameters<typeof bot.api.sendMessage>[2]),
+    sendMessage: (chatId, text, opts) => {
+      const { reply_to_message_id, ...rest } = opts ?? {};
+      const mapped = reply_to_message_id !== undefined
+        ? { ...rest, reply_parameters: { message_id: reply_to_message_id } }
+        : rest;
+      return bot.api.sendMessage(chatId, text, mapped as Parameters<typeof bot.api.sendMessage>[2]);
+    },
     editMessageText: (chatId, msgId, text, opts) =>
       bot.api.editMessageText(chatId, msgId, text, opts as Parameters<typeof bot.api.editMessageText>[3]).then(() => {}),
     deleteMessage: (chatId, msgId) =>
@@ -52,6 +57,7 @@ function grammyCtxToBotCtx(ctx: import('grammy').Context): BotContext {
     from: ctx.from ? { id: ctx.from.id, username: ctx.from.username, first_name: ctx.from.first_name } : undefined,
     chat: chat ? { id: chat.id, type: chat.type, is_forum: (chat as unknown as Record<string, unknown>).is_forum as boolean | undefined } : undefined,
     message: ctx.message ? {
+      message_id: ctx.message.message_id,
       text: ctx.message.text,
       caption: ctx.message.caption,
       message_thread_id: ctx.message.message_thread_id,

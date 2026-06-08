@@ -46,6 +46,7 @@ export interface BotContext {
   from?: { id: number; username?: string; first_name?: string };
   chat?: { id: number; type: string; is_forum?: boolean };
   message?: {
+    message_id?: number;
     text?: string;
     caption?: string;
     message_thread_id?: number;
@@ -82,6 +83,8 @@ export interface TelegramApiClient {
     message_thread_id?: number;
     parse_mode?: string;
     reply_markup?: TgKeyboard;
+    /** Reply to a specific message (used by the turn renderer to anchor its panel). */
+    reply_to_message_id?: number;
   }): Promise<{ message_id: number }>;
   editMessageText(chatId: number, messageId: number, text: string, options?: {
     parse_mode?: string;

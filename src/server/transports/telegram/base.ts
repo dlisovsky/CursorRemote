@@ -26,6 +26,8 @@ import {
   type FormattedMessage,
 } from './formatter.js';
 import { planLiveFeedUpdate, shouldSkipMessageForCompactLive } from './live-feed-sync.js';
+import { TurnRendererManager } from './turn-renderer/turn-manager.js';
+import { matchesRecentTelegramInbound } from './telegram-inbound-prompt.js';
 import {
   collectCurrentTurnLiveElements,
   findLastHumanIndexInTail,
@@ -129,6 +131,8 @@ export abstract class BaseTelegramTransport implements Transport {
   protected topicManager: TopicManager;
   protected messageTracker: MessageTracker;
   protected sendQueue: SendQueue;
+  /** Cursor-faithful single-panel turn renderer (only when config.turnRenderer). */
+  protected turnManager?: TurnRendererManager;
 
   private typingInterval: ReturnType<typeof setInterval> | null = null;
   private activityStaleTimer: ReturnType<typeof setInterval> | null = null;
@@ -180,6 +184,9 @@ export abstract class BaseTelegramTransport implements Transport {
   private lastQueueSig = new Map<number, string>();
   /** Inbound prompt status bubble (You: + Stop) until live feed takes over or agent idles. */
   private promptStatusMsgIds = new Map<number, number>();
+  /** Throttle auxiliary tab polls for live turns on non-active chat tabs (home window). */
+  private activeTurnAuxPollAt = new Map<number, number>();
+  private readonly ACTIVE_TURN_AUX_POLL_MS = 1200;
   protected authState: AuthState;
   protected registeredUsers: Set<number>;
 
@@ -403,6 +410,7 @@ export abstract class BaseTelegramTransport implements Transport {
     this.cancelRestartNoticeSchedule();
     this.restartNoticePosted = false;
     this.detachListeners();
+    this.turnManager?.stop();
     this.photoAlbumCollector.dispose();
     if (this.activityStaleTimer) { clearInterval(this.activityStaleTimer); this.activityStaleTimer = null; }
     this.deleteAllLiveFeedMessages();
@@ -447,6 +455,7 @@ export abstract class BaseTelegramTransport implements Transport {
       upsertPromptStatusMessage: (threadId, html, reuseMessageId) =>
         this.upsertPromptStatusMessage(threadId, html, reuseMessageId),
       clearPromptStatusMessage: (threadId) => this.clearPromptStatusMessage(threadId),
+      getTurnManager: () => this.ensureTurnManager(),
     };
   }
 
@@ -1008,6 +1017,25 @@ export abstract class BaseTelegramTransport implements Transport {
     }
   }
 
+  /** Lazily create the turn renderer once the chat id is known (flag-gated). */
+  protected ensureTurnManager(): TurnRendererManager | undefined {
+    if (!this.config.turnRenderer) return undefined;
+    const chatId = this.chatId;
+    if (chatId === undefined) return undefined;
+    if (!this.turnManager) {
+      this.turnManager = new TurnRendererManager({
+        api: this.api,
+        chatId,
+        hashSelector: (sp) => this.messageTracker.hashSelector(sp),
+        isTelegramInbound: (threadId, text) => matchesRecentTelegramInbound(threadId, text),
+        now: () => Date.now(),
+      });
+      this.turnManager.start();
+      console.log('[telegram] TurnRenderer enabled (single-panel turn experience)');
+    }
+    return this.turnManager;
+  }
+
   private processWindow(windowId: string, snapshot: WindowSnapshot): void {
     if (this.processing.has(windowId)) {
       this.pendingSnapshots.set(windowId, snapshot);
@@ -1119,6 +1147,20 @@ export abstract class BaseTelegramTransport implements Transport {
     if (!mapping.composerId && snapshot.activeComposerId) {
       mapping.composerId = snapshot.activeComposerId;
       this.topicManager.persistInPlace();
+    }
+
+    // Strangler-fig: when the turn renderer is enabled, it owns this topic's
+    // live panel end-to-end. Skip the entire legacy live-feed/activity path.
+    const turnManager = this.ensureTurnManager();
+    if (turnManager) {
+      await turnManager.ingest(threadId, snapshot);
+      await this.ingestActiveTurnsOnOtherTabs(windowId, activeTab.title, turnManager);
+      const anyActive = this.topicManager.getAllMappings().some(
+        m => m.windowId === windowId && turnManager.hasActiveTurn(m.threadId),
+      );
+      if (anyActive) this.windowMonitor.boostWindow(windowId);
+      else this.windowMonitor.clearBoost(windowId);
+      return;
     }
 
     const messages = snapshot.messages;
@@ -1808,6 +1850,77 @@ export abstract class BaseTelegramTransport implements Transport {
       this.typingInterval = setInterval(() => this.sendTyping(), TYPING_INTERVAL_MS);
     } else if (!active && this.typingInterval) {
       this.stopTyping();
+    }
+  }
+
+  private async waitForFreshExtraction(genBefore: number, maxWaitMs: number): Promise<void> {
+    const deadline = Date.now() + maxWaitMs;
+    while (this.stateManager.generation <= genBefore && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  private buildSnapshotFromState(windowId: string): WindowSnapshot | null {
+    const state = this.stateManager.getCurrentState();
+    if (!state.connected) return null;
+    const win = state.windows.find(w => w.id === windowId);
+    if (!win) return null;
+    return {
+      windowId,
+      windowTitle: win.title,
+      messages: state.messages,
+      chatTabs: state.chatTabs,
+      pendingApprovals: state.pendingApprovals,
+      agentStatus: state.agentStatus,
+      agentActivityText: state.agentActivityText,
+      agentActivityLive: state.agentActivityLive,
+      agentActivitySource: state.agentActivitySource,
+      composerQueue: state.composerQueue,
+      questionnaire: state.questionnaire,
+      inputAvailable: state.inputAvailable,
+      mode: state.mode,
+      model: state.model,
+      lastUpdated: Date.now(),
+      activeComposerId: state.activeComposerId ?? '',
+    };
+  }
+
+  /**
+   * Home-window polls only reflect the active chat tab. While another topic in
+   * the same window has a live turn, briefly switch to its tab, ingest, restore.
+   */
+  private async ingestActiveTurnsOnOtherTabs(
+    windowId: string,
+    activeTabTitle: string,
+    turnManager: TurnRendererManager,
+  ): Promise<void> {
+    const activeLower = cleanTabTitle(activeTabTitle).toLowerCase();
+    const now = Date.now();
+
+    for (const mapping of this.topicManager.getAllMappings()) {
+      if (mapping.windowId !== windowId) continue;
+      if (!turnManager.hasActiveTurn(mapping.threadId)) continue;
+      if (cleanTabTitle(mapping.tabTitle).toLowerCase() === activeLower) continue;
+
+      const last = this.activeTurnAuxPollAt.get(mapping.threadId) ?? 0;
+      if (now - last < this.ACTIVE_TURN_AUX_POLL_MS) continue;
+
+      const state = this.stateManager.getCurrentState();
+      const restoreTitle = state.chatTabs.find(t => t.isActive)?.title;
+      const genBefore = this.stateManager.generation;
+      const switched = await this.commandExecutor.switchTab(`aux-${mapping.threadId}`, mapping.tabTitle);
+      if (!switched.ok) continue;
+      await this.waitForFreshExtraction(genBefore, 3000);
+
+      const tabSnapshot = this.buildSnapshotFromState(windowId);
+      this.activeTurnAuxPollAt.set(mapping.threadId, now);
+      if (tabSnapshot) await turnManager.ingest(mapping.threadId, tabSnapshot);
+
+      if (restoreTitle && cleanTabTitle(restoreTitle).toLowerCase() !== cleanTabTitle(mapping.tabTitle).toLowerCase()) {
+        const genRestore = this.stateManager.generation;
+        await this.commandExecutor.switchTab(`aux-restore-${mapping.threadId}`, restoreTitle);
+        await this.waitForFreshExtraction(genRestore, 2000);
+      }
     }
   }
 

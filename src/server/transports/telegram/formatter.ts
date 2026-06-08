@@ -146,8 +146,13 @@ function formatHuman(msg: HumanMessage): FormattedMessage {
 }
 
 function formatAssistant(msg: AssistantMessage): FormattedMessage {
-  if (!msg.html) return { html: '' };
-  return { html: cursorHtmlToTelegram(msg.html, msg.codeBlocks) };
+  if (msg.html?.trim()) {
+    const converted = cursorHtmlToTelegram(msg.html, msg.codeBlocks).trim();
+    if (converted) return { html: converted };
+  }
+  const text = msg.text?.trim();
+  if (text) return { html: escapeHtml(text) };
+  return { html: '' };
 }
 
 function toolDiffStatsSuffix(msg: Pick<ToolCallElement, 'additions' | 'deletions'>): string {
@@ -916,7 +921,10 @@ function cursorHtmlToTelegram(html: string, codeBlocks?: CodeBlockItem[]): strin
     for (const child of li.childNodes) {
       if (child instanceof TextNode) {
         const text = child.textContent;
-        if (!text.trim()) continue;
+        if (!text.trim()) {
+          if (result && !result.endsWith(' ') && !result.endsWith('\n')) result += ' ';
+          continue;
+        }
         result += escapeHtml(text);
       } else if (child instanceof ParsedEl) {
         if ((child.rawTagName || '').toLowerCase() === 'p') {

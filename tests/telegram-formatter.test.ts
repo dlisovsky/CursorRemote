@@ -446,13 +446,13 @@ describe('fetch tool fixture rendering', () => {
 // ─── formatAssistant: empty HTML fallback ───
 
 describe('formatAssistant empty html', () => {
-  it('returns empty html when msg.html is empty (no unformatted flash)', () => {
+  it('falls back to plain text when msg.html is empty', () => {
     const msg: AssistantMessage = {
       type: 'assistant', id: 'a1', flatIndex: 0,
       text: 'HelloWorld', html: '', codeBlocks: [],
     };
     const { html } = formatElement(msg, dummyHash);
-    assert.equal(html, '', 'Should return empty html to skip message until HTML is available');
+    assert.match(html, /HelloWorld/);
   });
 
   it('returns formatted html when msg.html is present', () => {
@@ -463,6 +463,34 @@ describe('formatAssistant empty html', () => {
     const { html } = formatElement(msg, dummyHash);
     assert.ok(html.length > 0, 'Should return non-empty html');
     assert.match(html, /Hello World/);
+  });
+});
+
+// ─── list item space preservation ───
+
+describe('list item space preservation', () => {
+  it('preserves spaces between inline elements in list items', () => {
+    const msg: AssistantMessage = {
+      type: 'assistant', id: 'a1', flatIndex: 0,
+      text: '',
+      html: '<ul><li><strong>package.json</strong> — Node.js project manifest</li></ul>',
+      codeBlocks: [],
+    };
+    const { html } = formatElement(msg, dummyHash);
+    assert.match(html, /package\.json.* — Node\.js project manifest/,
+      'space and em-dash between filename and description must be preserved');
+  });
+
+  it('preserves spaces between adjacent inline elements', () => {
+    const msg: AssistantMessage = {
+      type: 'assistant', id: 'a1', flatIndex: 0,
+      text: '',
+      html: '<ul><li><strong>foo</strong> <em>bar</em> baz</li></ul>',
+      codeBlocks: [],
+    };
+    const { html } = formatElement(msg, dummyHash);
+    assert.ok(!html.includes('foobar'), 'should not eat space between foo and bar');
+    assert.ok(!html.includes('barbaz'), 'should not eat space between bar and baz');
   });
 });
 

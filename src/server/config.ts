@@ -38,6 +38,7 @@ export function loadConfig(): ServerConfig {
       impl: (process.env.TELEGRAM_IMPL === 'raw' ? 'raw' : 'grammy') as 'grammy' | 'raw',
       voiceEnabled: process.env.TELEGRAM_VOICE_ENABLED !== 'false',
       compactLive: process.env.TELEGRAM_COMPACT_LIVE !== 'false',
+      turnRenderer: process.env.TELEGRAM_TURN_RENDERER === 'true',
       showTools:
         process.env.TELEGRAM_SHOW_TOOLS === 'true' ||
         process.env.TELEGRAM_SHOW_FILE_TOOLS === 'true',

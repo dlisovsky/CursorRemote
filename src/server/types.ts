@@ -371,6 +371,8 @@ export interface TelegramConfig {
   voiceEnabled: boolean;
   /** Collapse in-flight tools/thoughts into one editable Telegram message per topic. */
   compactLive: boolean;
+  /** Cursor-faithful single-panel turn renderer (strangler-fig; replaces compactLive when on). */
+  turnRenderer: boolean;
   /** Post tool rows (reads, edits, etc.) to Telegram; web client always shows them. */
   showTools: boolean;
   /** Telegram photos → Cursor composer attachments. */

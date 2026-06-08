@@ -205,6 +205,7 @@ export class RawTelegramTransport extends BaseTelegramTransport {
       from: msg?.from ?? (cbq ? { id: cbq.from.id, username: cbq.from.username, first_name: cbq.from.first_name } : undefined),
       chat: msg?.chat ?? cbq?.message?.chat,
       message: msg ? {
+        message_id: msg.message_id,
         text: msg.text,
         caption: msg.caption,
         message_thread_id: msg.message_thread_id,

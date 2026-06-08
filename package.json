@@ -261,7 +261,10 @@
     "test": "npx tsx --test tests/*.test.ts",
     "prefetch:whisper": "python3 scripts/prefetch-whisper-model.py --model small",
     "probe": "tsx scripts/probe-cdp.ts",
-    "wait-record": "tsx scripts/wait-record.ts"
+    "wait-record": "tsx scripts/wait-record.ts",
+    "qa:telegram:login": "tsx scripts/qa-telegram.ts login",
+    "qa:telegram:login:web": "tsx scripts/qa-telegram-login-server.ts",
+    "qa:telegram": "tsx scripts/qa-telegram.ts run"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
@@ -281,6 +284,7 @@
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.24.0",
     "jsdom": "^29.0.1",
+    "telegram": "^2.26.22",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
