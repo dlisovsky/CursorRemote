@@ -20,6 +20,14 @@ const app = express();
 app.use(express.json());
 app.use(attachUser);
 
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    projects: config.projectPaths().length,
+    mockTelegram: config.mockTelegram,
+  });
+});
+
 app.post("/auth/telegram", (req, res) => {
   const initData = String(req.body?.initData ?? "");
   const user = validateInitData(initData);

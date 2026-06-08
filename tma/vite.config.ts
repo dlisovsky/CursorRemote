@@ -14,7 +14,7 @@ export default defineConfig({
     proxy: {
       "/auth": "http://localhost:3847",
       "/projects": "http://localhost:3847",
-      "/agents": "http://localhost:3847",
+      "/agents": { target: "http://localhost:3847", ws: true },
     },
   },
   build: {

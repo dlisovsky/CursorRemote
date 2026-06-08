@@ -17,11 +17,11 @@ cp .env.example .env
 # Set CURSOR_API_KEY and PROJECT_PATHS
 
 npm install
-npm run dev:server   # http://localhost:3847
-npm run dev:tma      # http://localhost:5173
+npm run dev:chrome:server   # backend with mock auth
+npm run dev:chrome          # TMA at http://localhost:5173
 ```
 
-Open http://localhost:5173 in Chrome. With `MOCK_TG=true`, auth works without Telegram.
+Open http://localhost:5173 in Chrome — mock auth works without Telegram (`MOCK_TG=true`).
 
 ## Environment
 
@@ -41,8 +41,14 @@ Open http://localhost:5173 in Chrome. With `MOCK_TG=true`, auth works without Te
 | Command | Description |
 |---------|-------------|
 | `npm run dev:server` | Backend API + WebSocket |
+| `npm run dev:chrome:server` | Backend with `MOCK_TG=true` (Chrome dev) |
 | `npm run dev:tma` | Vite dev server for TMA |
+| `npm run dev:chrome` | TMA with `VITE_MOCK_TG=true` (Chrome dev) |
 | `npm run build:tma` | Production TMA build (served by backend) |
+| `npm run watch:tma` | Rebuild TMA on file changes (use with Telegram tunnel) |
+| `npm run tunnel` | Cloudflare tunnel → localhost:3847 |
+| `npm run dev:telegram` | Build TMA + start backend for Telegram |
+| `npm run setup:telegram` | Verify tunnel health + set bot menu button |
 | `npm run sdk:smoke` | Verify Cursor SDK connectivity |
 | `npm run test` | Vitest unit tests |
 | `npm run test:e2e` | Playwright E2E (starts servers) |
@@ -62,8 +68,11 @@ Open http://localhost:5173 in Chrome. With `MOCK_TG=true`, auth works without Te
    ```bash
    npm run dev:telegram   # builds TMA + starts API on :3847
    npm run tunnel         # HTTPS → localhost:3847
+   npm run setup:telegram # verify health + set menu button
    ```
-5. In BotFather → Bot Settings → Menu Button / Web App, set URL to `PUBLIC_URL` (e.g. `https://cursorremote.yatrade.org`)
+5. In BotFather → /myapps → Web App URL = `PUBLIC_URL` (e.g. `https://cursorremote.yatrade.org`)
+
+While iterating on TMA UI for Telegram, run `npm run watch:tma` in a third terminal to auto-rebuild `tma/dist`.
 
 The backend serves the built TMA from `tma/dist` on the same origin (API + WebSocket work over the tunnel).
 
