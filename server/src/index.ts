@@ -70,7 +70,15 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(config.port, () => {
+  const projects = config.projectPaths();
   console.log(`CursorRemote backend http://localhost:${config.port}`);
   console.log(`Cursor model: ${config.model.id}`);
+  if (projects.length === 0) {
+    console.warn("PROJECT_PATHS is empty — add comma-separated repo paths to .env");
+  } else {
+    console.log(`Projects (${projects.length}): ${projects.map((p) => path.basename(p)).join(", ")}`);
+  }
+  const publicUrl = process.env.PUBLIC_URL?.trim();
+  if (publicUrl) console.log(`Public URL: ${publicUrl}`);
   if (config.mockTelegram) console.log("MOCK_TG=true — Chrome mock mode enabled");
 });

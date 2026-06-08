@@ -8,6 +8,8 @@
     "dev:server": "tsx server/src/index.ts",
     "dev:tma": "vite --config tma/vite.config.ts",
     "build:tma": "vite build --config tma/vite.config.ts",
+    "tunnel": "cloudflared tunnel --config .cloudflared/cursorremote.yml run",
+    "dev:telegram": "npm run build:tma && npm run dev:server",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

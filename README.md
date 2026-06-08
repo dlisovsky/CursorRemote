@@ -51,14 +51,21 @@ Open http://localhost:5173 in Chrome. With `MOCK_TG=true`, auth works without Te
 ## Telegram Mini App (production)
 
 1. Create a bot via [@BotFather](https://t.me/BotFather)
-2. Set `TELEGRAM_BOT_TOKEN` and `MOCK_TG=false`
-3. Expose backend over HTTPS (required by Telegram):
+2. Set `TELEGRAM_BOT_TOKEN`, `MOCK_TG=false`, `VITE_MOCK_TG=false`, and `PROJECT_PATHS` in `.env`
+3. One-time Cloudflare tunnel (if not already created):
    ```bash
-   ngrok http 3847
+   cloudflared tunnel create cursorremote
+   cloudflared tunnel route dns cursorremote cursorremote.yourdomain.com
    ```
-4. Build TMA: `npm run build:tma`
-5. In BotFather → Bot Settings → Menu Button / Web App, set URL to your HTTPS origin
-6. Point `VITE_*` proxy: in production the backend serves `tma/dist` on the same origin
+   Config lives in `.cloudflared/cursorremote.yml`. Set `PUBLIC_URL` in `.env` to match the hostname.
+4. Run backend + tunnel:
+   ```bash
+   npm run dev:telegram   # builds TMA + starts API on :3847
+   npm run tunnel         # HTTPS → localhost:3847
+   ```
+5. In BotFather → Bot Settings → Menu Button / Web App, set URL to `PUBLIC_URL` (e.g. `https://cursorremote.yatrade.org`)
+
+The backend serves the built TMA from `tma/dist` on the same origin (API + WebSocket work over the tunnel).
 
 ## Project layout
 
