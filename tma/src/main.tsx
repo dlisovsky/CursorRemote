@@ -10,6 +10,7 @@ import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import "./tma.css";
 import { App } from "./App";
+import { isTelegramWebApp } from "./useTelegramApp.js";
 
 const theme = createTheme({
   primaryColor: "teal",
@@ -22,7 +23,11 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="dark">
       <ModalsProvider>
-        <Notifications position="top-center" limit={2} zIndex={1000} />
+        <Notifications
+          position={isTelegramWebApp() ? "bottom-center" : "top-center"}
+          limit={2}
+          zIndex={1000}
+        />
         <App />
       </ModalsProvider>
     </MantineProvider>

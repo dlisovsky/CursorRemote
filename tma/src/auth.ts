@@ -1,11 +1,14 @@
 import { MOCK_INIT_DATA } from "../../shared/types.js";
+import { getTelegramInitData, mockAuthEnabled } from "./telegramEnv.js";
 
 const TOKEN_KEY = "cr_jwt";
 
+/** Real Telegram initData when in Mini App; mock payload in Chrome when VITE_MOCK_TG=true. */
 export function getInitData(): string {
-  if (import.meta.env.VITE_MOCK_TG === "true") return MOCK_INIT_DATA;
-  const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
-  return tg?.initData ?? MOCK_INIT_DATA;
+  const real = getTelegramInitData();
+  if (real) return real;
+  if (mockAuthEnabled()) return MOCK_INIT_DATA;
+  return "";
 }
 
 export function getToken(): string | null {

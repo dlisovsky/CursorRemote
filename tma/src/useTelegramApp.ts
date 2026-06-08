@@ -1,4 +1,7 @@
 import { useEffect } from "react";
+import { isTelegramWebApp } from "./telegramEnv.js";
+
+export { isTelegramWebApp } from "./telegramEnv.js";
 
 interface TelegramWebApp {
   ready?: () => void;
@@ -30,13 +33,6 @@ interface TelegramWebApp {
 
 function getTg(): TelegramWebApp | undefined {
   return (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
-}
-
-/** True when opened inside Telegram (not Chrome mock dev). */
-export function isTelegramWebApp(): boolean {
-  if (import.meta.env.VITE_MOCK_TG === "true") return false;
-  const initData = (getTg() as { initData?: string } | undefined)?.initData?.trim() ?? "";
-  return initData.length > 0;
 }
 
 const TG_BG = "#1a1b1e";

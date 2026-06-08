@@ -14,14 +14,18 @@ Control Cursor agents from Telegram (Mini App) or Chrome during development.
 
 ```bash
 cp .env.example .env
-# Set CURSOR_API_KEY and PROJECT_PATHS
+# Set CURSOR_API_KEY and PROJECT_PATHS (MOCK_TG=true and VITE_MOCK_TG=true by default)
 
 npm install
-npm run dev:chrome:server   # backend with mock auth
-npm run dev:chrome          # TMA at http://localhost:5173
+npm run dev:server   # terminal 1 — backend (:3847), accepts mock + real TG auth
+npm run dev:tma      # terminal 2 — Vite dev server (:5173)
 ```
 
-Open http://localhost:5173 in Chrome — mock auth works without Telegram (`MOCK_TG=true`).
+**Chrome:** open http://localhost:5173 — uses mock initData automatically.
+
+**Telegram Mini App:** `npm run dev:telegram` + `npm run tunnel`, open via your bot — uses real initData; native MainButton/back UI activates automatically.
+
+Both work at the same time when `MOCK_TG=true` (backend accepts mock and validates real HMAC).
 
 ## Environment
 
@@ -30,8 +34,8 @@ Open http://localhost:5173 in Chrome — mock auth works without Telegram (`MOCK
 | `CURSOR_API_KEY` | Cursor API key (required) |
 | `CURSOR_MODEL` | Default `composer-2.5` |
 | `PROJECT_PATHS` | Comma-separated absolute repo paths |
-| `MOCK_TG` | `true` for Chrome dev auth |
-| `VITE_MOCK_TG` | `true` for TMA mock initData |
+| `MOCK_TG` | `true` (default dev) — backend accepts mock initData **and** real Telegram HMAC |
+| `VITE_MOCK_TG` | `true` (default dev) — Chrome falls back to mock; Mini App uses real initData when present |
 | `TELEGRAM_BOT_TOKEN` | Bot token for real initData HMAC |
 | `JWT_SECRET` | JWT signing secret |
 | `PORT` | Backend port (default `3847`) |
@@ -41,9 +45,9 @@ Open http://localhost:5173 in Chrome — mock auth works without Telegram (`MOCK
 | Command | Description |
 |---------|-------------|
 | `npm run dev:server` | Backend API + WebSocket |
-| `npm run dev:chrome:server` | Backend with `MOCK_TG=true` (Chrome dev) |
-| `npm run dev:tma` | Vite dev server for TMA |
-| `npm run dev:chrome` | TMA with `VITE_MOCK_TG=true` (Chrome dev) |
+| `npm run dev:tma` | Vite dev server for TMA (Chrome dev at :5173) |
+| `npm run dev:chrome:server` | Alias: backend with `MOCK_TG=true` forced |
+| `npm run dev:chrome` | Alias: Vite with `VITE_MOCK_TG=true` forced |
 | `npm run build:tma` | Production TMA build (served by backend) |
 | `npm run watch:tma` | Rebuild TMA on file changes (use with Telegram tunnel) |
 | `npm run tunnel` | Cloudflare tunnel → localhost:3847 |
@@ -57,7 +61,7 @@ Open http://localhost:5173 in Chrome — mock auth works without Telegram (`MOCK
 ## Telegram Mini App (production)
 
 1. Create a bot via [@BotFather](https://t.me/BotFather)
-2. Set `TELEGRAM_BOT_TOKEN`, `MOCK_TG=false`, `VITE_MOCK_TG=false`, and `PROJECT_PATHS` in `.env`
+2. Set `TELEGRAM_BOT_TOKEN` and `PROJECT_PATHS` in `.env` (keep `MOCK_TG=true` for dev, or set both mock flags `false` for production-only auth)
 3. One-time Cloudflare tunnel (if not already created):
    ```bash
    cloudflared tunnel create cursorremote

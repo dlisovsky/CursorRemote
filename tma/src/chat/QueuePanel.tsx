@@ -36,22 +36,22 @@ export function QueuePanel({
             </div>
             <Group gap={4} wrap="nowrap">
               <Button
-                size="compact-xs"
+                size="compact-sm"
                 variant="light"
                 color="orange"
-                leftSection={<IconArrowUp size={12} />}
+                leftSection={<IconArrowUp size={14} />}
                 onClick={() => onForceSend(item.id)}
               >
                 Now
               </Button>
               <ActionIcon
-                size="md"
+                size={44}
                 variant="subtle"
                 color="gray"
                 aria-label="Remove from queue"
                 onClick={() => onCancel(item.id)}
               >
-                <IconX size={14} />
+                <IconX size={18} />
               </ActionIcon>
             </Group>
           </Group>

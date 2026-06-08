@@ -88,5 +88,7 @@ server.listen(config.port, () => {
   }
   const publicUrl = process.env.PUBLIC_URL?.trim();
   if (publicUrl) console.log(`Public URL: ${publicUrl}`);
-  if (config.mockTelegram) console.log("MOCK_TG=true — Chrome mock mode enabled");
+  if (config.mockTelegram) {
+    console.log("MOCK_TG=true — mock initData + real Telegram HMAC both accepted");
+  }
 });

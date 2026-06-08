@@ -12,9 +12,11 @@ import {
 } from "@mantine/core";
 import { IconFolder, IconPlus, IconRobot } from "@tabler/icons-react";
 import { createAgent, fetchProjects, type ProjectWithAgents } from "../api.js";
-import { agentStatusColor } from "../status.js";
+import { agentStatusColor, runStatusLabel } from "../status.js";
+import { isTelegramWebApp } from "../useTelegramApp.js";
 
 export function ProjectsPage({ onOpenAgent }: { onOpenAgent: (id: string) => void }) {
+  const inTelegram = isTelegramWebApp();
   const [projects, setProjects] = useState<ProjectWithAgents[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState<string | null>(null);
@@ -68,12 +70,18 @@ export function ProjectsPage({ onOpenAgent }: { onOpenAgent: (id: string) => voi
     );
   }
 
+  const defaultOpen = projects
+    .filter((p) => p.agents.length > 0)
+    .map((p) => p.id)
+    .slice(0, inTelegram ? 1 : undefined);
+
   return (
     <Accordion
       multiple
-      defaultValue={projects.map((p) => p.id)}
+      defaultValue={defaultOpen}
       variant="separated"
       radius="md"
+      chevronPosition="right"
     >
       {projects.map((project) => (
         <Accordion.Item key={project.id} value={project.id}>
@@ -134,7 +142,7 @@ export function ProjectsPage({ onOpenAgent }: { onOpenAgent: (id: string) => voi
                         </Text>
                       </Group>
                       <Badge color={agentStatusColor(agent.status)} variant="dot" size="sm">
-                        {agent.status}
+                        {runStatusLabel(agent.status)}
                       </Badge>
                     </Group>
                   </Paper>

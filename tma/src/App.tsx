@@ -58,7 +58,7 @@ export function App() {
     >
       <Stack gap="lg">
         <Title order={inTelegram ? 4 : 3} fw={500}>
-          Your projects
+          {inTelegram ? "Projects" : "Your projects"}
         </Title>
         <ProjectsPage onOpenAgent={setAgentId} />
       </Stack>

@@ -544,16 +544,11 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       <AppShell.Main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <ActivityStrip label={activityLabel} />
         <ScrollArea style={{ flex: 1 }} type="auto" offsetScrollbars>
-          <Stack gap="sm" p="md" pb="xl">
+          <Stack gap="sm" p={inTelegram ? "sm" : "md"} pb="xl" style={{ alignItems: "stretch" }}>
             {items.length === 0 && !isRunning && (
-              <Stack align="center" justify="center" py="xl" gap="xs">
-                <Text c="dimmed" size="sm" ta="center">
-                  Send a prompt to start the agent.
-                </Text>
-                <Text c="dimmed" size="xs" ta="center">
-                  Tool use, thinking, and streaming appear here in real time.
-                </Text>
-              </Stack>
+              <Text c="dimmed" size="sm" ta="center" py="xl">
+                {inTelegram ? "Send a prompt to start." : "Send a prompt to start the agent."}
+              </Text>
             )}
             {items.map((item) => (
               <ChatItemView key={item.id} item={item} />
@@ -588,90 +583,23 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
               })
             }
           />
-          <Group align="flex-end" gap="sm" wrap="nowrap">
-            <ActionIcon
-              size={44}
-              radius="xl"
-              variant={recording ? "filled" : "light"}
-              color={recording ? "red" : "gray"}
-              loading={transcribing}
-              onClick={() => void onVoice()}
-              aria-label={recording ? "Stop recording" : "Voice input"}
-            >
-              <IconMicrophone size={20} />
-            </ActionIcon>
-            <ActionIcon
-              size={44}
-              radius="xl"
-              variant="light"
-              color="gray"
-              onClick={() => libraryInputRef.current?.click()}
-              aria-label="Choose from photo library"
-            >
-              <IconPhoto size={20} />
-            </ActionIcon>
-            <ActionIcon
-              size={44}
-              radius="xl"
-              variant="light"
-              color="gray"
-              onClick={() => cameraInputRef.current?.click()}
-              aria-label="Take photo"
-            >
-              <IconCamera size={20} />
-            </ActionIcon>
-            <input
-              ref={libraryInputRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                onPhotoSelected(e.currentTarget.files?.[0] ?? null);
-                e.currentTarget.value = "";
-              }}
-            />
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              hidden
-              onChange={(e) => {
-                onPhotoSelected(e.currentTarget.files?.[0] ?? null);
-                e.currentTarget.value = "";
-              }}
-            />
-            <Textarea
-              placeholder={composerPlaceholder}
-              value={text}
-              onChange={(e) => setText(e.currentTarget.value)}
-              onPaste={onPaste}
-              autosize
-              minRows={1}
-              maxRows={6}
-              style={{ flex: 1 }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void onSend();
-                }
-              }}
-            />
-            {!inTelegram && (
-              <ActionIcon
-                size={44}
-                radius="xl"
-                variant="filled"
-                color="teal"
-                loading={sending}
-                disabled={!canSend}
-                onClick={() => void onSend()}
-                aria-label={isRunning ? "Add to queue" : "Send"}
-              >
-                <IconSend size={20} />
-              </ActionIcon>
-            )}
-          </Group>
+          <ComposerInput
+            inTelegram={inTelegram}
+            text={text}
+            setText={setText}
+            placeholder={composerPlaceholder}
+            onPaste={onPaste}
+            onSend={onSend}
+            canSend={canSend}
+            sending={sending}
+            isRunning={isRunning}
+            recording={recording}
+            transcribing={transcribing}
+            onVoice={() => void onVoice()}
+            libraryInputRef={libraryInputRef}
+            cameraInputRef={cameraInputRef}
+            onPhotoSelected={onPhotoSelected}
+          />
         </Stack>
       </AppShell.Footer>
     </AppShell>
@@ -746,6 +674,145 @@ function ChatItemView({ item }: { item: ChatItem }) {
         )}
       </Paper>
     </Box>
+  );
+}
+
+function ComposerInput({
+  inTelegram,
+  text,
+  setText,
+  placeholder,
+  onPaste,
+  onSend,
+  canSend,
+  sending,
+  isRunning,
+  recording,
+  transcribing,
+  onVoice,
+  libraryInputRef,
+  cameraInputRef,
+  onPhotoSelected,
+}: {
+  inTelegram: boolean;
+  text: string;
+  setText: (v: string) => void;
+  placeholder: string;
+  onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onSend: () => void;
+  canSend: boolean;
+  sending: boolean;
+  isRunning: boolean;
+  recording: boolean;
+  transcribing: boolean;
+  onVoice: () => void;
+  libraryInputRef: React.RefObject<HTMLInputElement | null>;
+  cameraInputRef: React.RefObject<HTMLInputElement | null>;
+  onPhotoSelected: (file: File | null) => void;
+}) {
+  const textarea = (
+    <Textarea
+      placeholder={placeholder}
+      value={text}
+      onChange={(e) => setText(e.currentTarget.value)}
+      onPaste={onPaste}
+      autosize
+      minRows={inTelegram ? 2 : 1}
+      maxRows={6}
+      styles={{ input: { minHeight: 44, fontSize: 16 } }}
+      style={inTelegram ? undefined : { flex: 1 }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey && !inTelegram) {
+          e.preventDefault();
+          void onSend();
+        }
+      }}
+    />
+  );
+
+  const mediaIcons = (
+    <>
+      <ActionIcon
+        size={44}
+        radius="xl"
+        variant={recording ? "filled" : "light"}
+        color={recording ? "red" : "gray"}
+        loading={transcribing}
+        onClick={onVoice}
+        aria-label={recording ? "Stop recording" : "Voice input"}
+      >
+        <IconMicrophone size={20} />
+      </ActionIcon>
+      <ActionIcon
+        size={44}
+        radius="xl"
+        variant="light"
+        color="gray"
+        onClick={() => libraryInputRef.current?.click()}
+        aria-label="Choose from photo library"
+      >
+        <IconPhoto size={20} />
+      </ActionIcon>
+      <ActionIcon
+        size={44}
+        radius="xl"
+        variant="light"
+        color="gray"
+        onClick={() => cameraInputRef.current?.click()}
+        aria-label="Take photo"
+      >
+        <IconCamera size={20} />
+      </ActionIcon>
+      <input
+        ref={libraryInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          onPhotoSelected(e.currentTarget.files?.[0] ?? null);
+          e.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={(e) => {
+          onPhotoSelected(e.currentTarget.files?.[0] ?? null);
+          e.currentTarget.value = "";
+        }}
+      />
+    </>
+  );
+
+  if (inTelegram) {
+    return (
+      <Stack gap="xs">
+        {textarea}
+        <Group gap="sm" wrap="nowrap">{mediaIcons}</Group>
+      </Stack>
+    );
+  }
+
+  return (
+    <Group align="flex-end" gap="sm" wrap="nowrap">
+      {mediaIcons}
+      {textarea}
+      <ActionIcon
+        size={44}
+        radius="xl"
+        variant="filled"
+        color="teal"
+        loading={sending}
+        disabled={!canSend}
+        onClick={() => void onSend()}
+        aria-label={isRunning ? "Add to queue" : "Send"}
+      >
+        <IconSend size={20} />
+      </ActionIcon>
+    </Group>
   );
 }
 
