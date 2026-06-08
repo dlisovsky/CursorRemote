@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["scripts/**/*.ts", "shared/**/*.ts", "server/**/*.ts", "tma/**/*.ts"],
-  "exclude": ["node_modules", "tma/dist"]
+  "exclude": ["node_modules", "tma/dist", "e2e", "tests"]
 }

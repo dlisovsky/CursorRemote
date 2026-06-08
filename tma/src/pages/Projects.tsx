@@ -80,17 +80,12 @@ export function ProjectsPage({ onOpenAgent }: { onOpenAgent: (id: string) => voi
           <Accordion.Control>
             <Group justify="space-between" wrap="nowrap" pr="xs">
               <Group gap="sm" wrap="nowrap">
-                <ThemeIcon size="md" radius="md" variant="light" color="teal">
+                <ThemeIcon size="md" radius="md" variant="default" color="gray">
                   <IconFolder size={16} />
                 </ThemeIcon>
-                <div>
-                  <Text fw={600} size="sm" lineClamp={1}>
-                    {project.name}
-                  </Text>
-                  <Text c="dimmed" size="xs" lineClamp={1}>
-                    {project.path}
-                  </Text>
-                </div>
+                <Text fw={600} size="sm" lineClamp={1}>
+                  {project.name}
+                </Text>
               </Group>
               <Badge variant="light" color="gray">
                 {project.agents.length} agent{project.agents.length === 1 ? "" : "s"}
@@ -131,7 +126,7 @@ export function ProjectsPage({ onOpenAgent }: { onOpenAgent: (id: string) => voi
                   >
                     <Group justify="space-between" wrap="nowrap">
                       <Group gap="sm" wrap="nowrap">
-                        <ThemeIcon size="sm" radius="md" variant="light" color="teal">
+                        <ThemeIcon size="sm" radius="md" variant="default" color="gray">
                           <IconRobot size={14} />
                         </ThemeIcon>
                         <Text fw={500} size="sm" lineClamp={1}>

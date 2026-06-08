@@ -173,3 +173,16 @@ export function listRunEvents(runId: string, afterSeq = 0, limit = 200): { seq: 
     .all(runId, afterSeq, limit) as { seq: number; event_json: string }[];
   return rows.map((r) => ({ seq: r.seq, event: JSON.parse(r.event_json) as WireMessage }));
 }
+
+export function listAgentHistory(agentId: string, limit = 400): WireMessage[] {
+  const rows = db
+    .prepare(
+      `SELECT re.event_json FROM run_events re
+       INNER JOIN runs r ON r.id = re.run_id
+       WHERE r.agent_id = ?
+       ORDER BY r.started_at ASC, re.seq ASC
+       LIMIT ?`,
+    )
+    .all(agentId, limit) as { event_json: string }[];
+  return rows.map((r) => JSON.parse(r.event_json) as WireMessage);
+}

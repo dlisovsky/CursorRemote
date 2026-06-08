@@ -47,6 +47,7 @@ export interface QueueItem {
 }
 
 export type WireMessage =
+  | { type: "user_message"; runId: string; text: string; queued?: boolean }
   | { type: "assistant_delta"; runId: string; text: string }
   | { type: "assistant_complete"; runId: string; text: string }
   | { type: "thinking"; runId: string; duration?: number }

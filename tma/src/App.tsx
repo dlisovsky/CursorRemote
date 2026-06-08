@@ -49,12 +49,9 @@ export function App() {
   return (
     <Container py="md" px="md" size="sm" pb="calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom))">
       <Stack gap="lg">
-        <div>
-          <Title order={2}>CursorRemote</Title>
-          <Text c="dimmed" size="sm">
-            Projects and agents
-          </Text>
-        </div>
+        <Title order={3} c="dimmed" fw={500}>
+          Your projects
+        </Title>
         <ProjectsPage onOpenAgent={setAgentId} />
       </Stack>
     </Container>

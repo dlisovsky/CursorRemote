@@ -9,6 +9,19 @@ interface TelegramWebApp {
     onClick: (cb: () => void) => void;
     offClick: (cb: () => void) => void;
   };
+  MainButton?: {
+    text: string;
+    show: () => void;
+    hide: () => void;
+    enable: () => void;
+    disable: () => void;
+    onClick: (cb: () => void) => void;
+    offClick: (cb: () => void) => void;
+    setText: (text: string) => void;
+    color?: string;
+    textColor?: string;
+    isVisible?: boolean;
+  };
 }
 
 function getTg(): TelegramWebApp | undefined {
@@ -21,6 +34,28 @@ export function useTelegramApp(): void {
     tg?.ready?.();
     tg?.expand?.();
   }, []);
+}
+
+export function useTelegramMainButton(
+  options: { text: string; visible: boolean; enabled?: boolean; onClick: () => void } | null,
+): void {
+  useEffect(() => {
+    const btn = getTg()?.MainButton;
+    if (!btn || !options?.visible) {
+      btn?.hide?.();
+      return;
+    }
+
+    btn.setText(options.text);
+    if (options.enabled === false) btn.disable();
+    else btn.enable();
+    btn.show();
+    btn.onClick(options.onClick);
+    return () => {
+      btn.offClick(options.onClick);
+      btn.hide();
+    };
+  }, [options?.text, options?.visible, options?.enabled, options?.onClick]);
 }
 
 export function useTelegramBackButton(onBack: (() => void) | null): void {

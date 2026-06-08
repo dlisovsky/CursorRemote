@@ -22,6 +22,12 @@ agentsRouter.get("/:id", (req, res) => {
   res.json({ ...agent, activeRunId: orchestrator.getActiveRunId(agent.id) });
 });
 
+agentsRouter.get("/:id/history", (req, res) => {
+  const agent = assertOwned(req.params.id!, (req as AuthedRequest).user);
+  if (!agent) return res.status(404).json({ error: "not_found" });
+  res.json({ events: store.listAgentHistory(agent.id) });
+});
+
 agentsRouter.post("/:id/send", async (req, res) => {
   const agent = assertOwned(req.params.id!, (req as AuthedRequest).user);
   if (!agent) return res.status(404).json({ error: "not_found" });

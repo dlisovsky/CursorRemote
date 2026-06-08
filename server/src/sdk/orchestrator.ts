@@ -149,6 +149,7 @@ export async function sendPrompt(
 
   const sdk = await getOrResumeHandle(agentId);
   const run = await sdk.send(text);
+  bridge.fanOut(agentId, run.id, { type: "user_message", runId: run.id, text });
   void consumeRun(agentId, run);
   return { runId: run.id };
 }

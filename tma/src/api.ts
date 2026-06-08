@@ -48,6 +48,10 @@ export function fetchAgent(agentId: string): Promise<AgentDetail> {
   return api(`/agents/${agentId}`);
 }
 
+export function fetchAgentHistory(agentId: string): Promise<{ events: import("../../shared/types.js").WireMessage[] }> {
+  return api(`/agents/${agentId}/history`);
+}
+
 export function sendPrompt(agentId: string, text: string): Promise<SendResponse> {
   return api(`/agents/${agentId}/send`, {
     method: "POST",

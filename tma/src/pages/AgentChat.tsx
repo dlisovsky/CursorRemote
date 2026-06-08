@@ -38,13 +38,16 @@ import {
   cancelQueuedItem,
   cancelRun,
   fetchAgent,
+  fetchAgentHistory,
   forceSendQueued,
   sendPrompt,
   type AgentDetail,
 } from "../api.js";
+import { chatItemsFromHistory } from "../chat/history.js";
+import { MarkdownText } from "../chat/MarkdownText.js";
 import { agentStatusColor, runStatusLabel } from "../status.js";
 import { connectAgentStream } from "../stream.js";
-import { useTelegramBackButton } from "../useTelegramApp.js";
+import { useTelegramBackButton, useTelegramMainButton } from "../useTelegramApp.js";
 
 export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: () => void }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
@@ -78,7 +81,29 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     refreshAgent();
   }, [refreshAgent]);
 
+  useEffect(() => {
+    void fetchAgentHistory(agentId).then(({ events }) => {
+      const historical = chatItemsFromHistory(events);
+      if (historical.length > 0) setItems(historical);
+    });
+  }, [agentId]);
+
   const handleWireEvent = useCallback((event: WireMessage) => {
+    if (event.type === "user_message") {
+      setItems((prev) => {
+        if (prev.some((x) => x.kind === "user" && x.text === event.text)) return prev;
+        return [
+          ...prev,
+          {
+            kind: "user",
+            id: `u-${event.runId}`,
+            text: event.text,
+            queued: event.queued,
+          },
+        ];
+      });
+    }
+
     if (event.type === "assistant_delta") {
       setThinkingActive(false);
       setActiveToolName(null);
@@ -190,7 +215,15 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       }
     }
 
-    if (event.type === "queue_update") setQueue(event.items);
+    if (event.type === "queue_update") {
+      setQueue(event.items);
+      const queuedTexts = new Set(event.items.map((i) => i.text));
+      setItems((prev) =>
+        prev.map((x) =>
+          x.kind === "user" && x.queued && !queuedTexts.has(x.text) ? { ...x, queued: false } : x,
+        ),
+      );
+    }
 
     if (event.type === "error") {
       setItems((prev) => [
@@ -221,7 +254,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     return "Working…";
   }, [isRunning, activeToolName, thinkingActive, isStreaming]);
 
-  async function onSend() {
+  const onSend = useCallback(async () => {
     const prompt = text.trim();
     if (!prompt || sending) return;
 
@@ -252,9 +285,9 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     } finally {
       setSending(false);
     }
-  }
+  }, [agentId, sending, text]);
 
-  async function onStop() {
+  const onStop = useCallback(async () => {
     const id = runId ?? agent?.activeRunId;
     if (!id) return;
     try {
@@ -264,7 +297,20 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       const message = err instanceof Error ? err.message : String(err);
       notifications.show({ title: "Stop failed", message, color: "red" });
     }
-  }
+  }, [agent?.activeRunId, agentId, runId]);
+
+  const mainButtonText = isRunning ? "Stop generating" : "Send";
+  const mainButtonVisible = isRunning || Boolean(text.trim());
+  useTelegramMainButton(
+    mainButtonVisible
+      ? {
+          text: mainButtonText,
+          visible: true,
+          enabled: isRunning || Boolean(text.trim()) && !sending,
+          onClick: () => void (isRunning ? onStop() : onSend()),
+        }
+      : null,
+  );
 
   function confirmForceSend(queueId: string) {
     modals.openConfirmModal({
@@ -452,19 +498,23 @@ function ChatItemView({ item }: { item: ChatItem }) {
             Queued
           </Badge>
         )}
-        <Text size="sm" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-          {item.text}
-          {item.kind === "assistant" && item.streaming && (
-            <Text span c="teal.4" inherit>
-              ▍
-            </Text>
-          )}
-          {item.kind === "assistant" && item.cancelled && (
-            <Text span c="dimmed" size="xs" ml={8}>
-              (stopped)
-            </Text>
-          )}
-        </Text>
+        {item.kind === "assistant" && !item.streaming ? (
+          <MarkdownText text={item.text} />
+        ) : (
+          <Text size="sm" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {item.text}
+            {item.kind === "assistant" && item.streaming && (
+              <Text span c="teal.4" inherit>
+                ▍
+              </Text>
+            )}
+          </Text>
+        )}
+        {item.kind === "assistant" && item.cancelled && (
+          <Text span c="dimmed" size="xs" mt={4} display="block">
+            (stopped)
+          </Text>
+        )}
       </Paper>
     </Box>
   );

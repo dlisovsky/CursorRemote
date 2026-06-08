@@ -8,10 +8,14 @@
     "dev:server": "tsx server/src/index.ts",
     "dev:tma": "vite --config tma/vite.config.ts",
     "build:tma": "vite build --config tma/vite.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.18",
+    "@fontsource/geist-sans": "^5.2.5",
     "@mantine/core": "^9.3.1",
     "@mantine/hooks": "^9.3.1",
     "@mantine/modals": "^9.3.1",
@@ -21,9 +25,12 @@
     "jsonwebtoken": "^9.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^22.15.3",
@@ -37,6 +44,7 @@
     "postcss-simple-vars": "^7.0.1",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^4.1.8"
   }
 }
