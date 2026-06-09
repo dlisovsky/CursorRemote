@@ -14,6 +14,23 @@ import * as projectsStream from "../projects-stream-bridge.js";
 const handles = new Map<string, SDKAgent>();
 const activeRuns = new Map<string, Run>();
 const promptQueues = new Map<string, { id: string; text: string; attachments?: IncomingAttachment[] }[]>();
+const idleResolvers = new Map<string, Array<() => void>>();
+
+function resolveIdle(agentId: string): void {
+  const list = idleResolvers.get(agentId);
+  if (!list?.length) return;
+  idleResolvers.delete(agentId);
+  for (const resolve of list) resolve();
+}
+
+export function waitForIdle(agentId: string): Promise<void> {
+  if (!activeRuns.has(agentId)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const list = idleResolvers.get(agentId) ?? [];
+    list.push(resolve);
+    idleResolvers.set(agentId, list);
+  });
+}
 
 export interface SendPromptInput {
   text: string;
@@ -185,6 +202,7 @@ async function consumeRun(agentId: string, run: Run): Promise<void> {
     store.finishRun(run.id, "error");
   } finally {
     activeRuns.delete(agentId);
+    resolveIdle(agentId);
     setAgentActivity(agentId, null);
     store.updateAgentStatus(agentId, "idle");
     projectsStream.notifyAgent(agentId);
@@ -273,13 +291,14 @@ export async function cancelRun(agentId: string): Promise<void> {
 }
 
 export async function forceSendQueued(agentId: string, queueId: string): Promise<{ runId: string }> {
-  await cancelRun(agentId);
   const q = promptQueues.get(agentId) ?? [];
   const idx = q.findIndex((x) => x.id === queueId);
   if (idx < 0) throw new Error("Queue item not found");
   const [item] = q.splice(idx, 1);
   promptQueues.set(agentId, q);
   publishQueue(agentId);
+  await cancelRun(agentId);
+  await waitForIdle(agentId);
   return sendPrompt(agentId, { text: item!.text, attachments: item!.attachments });
 }
 

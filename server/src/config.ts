@@ -15,12 +15,21 @@ function required(name: string): string {
   return v;
 }
 
+function resolveJwtSecret(): string {
+  const v = process.env.JWT_SECRET?.trim();
+  if (v) return v;
+  if (process.env.MOCK_TG === "true") return "dev-jwt-secret-change-me";
+  throw new Error("Missing env: JWT_SECRET (required when MOCK_TG is not true)");
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4871),
   cursorApiKey: () => required("CURSOR_API_KEY"),
   telegramBotToken: () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "",
   mockTelegram: process.env.MOCK_TG === "true",
-  jwtSecret: process.env.JWT_SECRET?.trim() ?? "dev-jwt-secret-change-me",
+  get jwtSecret(): string {
+    return resolveJwtSecret();
+  },
   jwtTtlSeconds: Number(process.env.JWT_TTL_SECONDS ?? 86_400),
   dbPath: process.env.DB_PATH?.trim() ?? path.join(process.cwd(), "data", "agents.db"),
   /** Comma-separated absolute paths to project repos. */

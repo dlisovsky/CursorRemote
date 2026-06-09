@@ -112,4 +112,51 @@ describe("orchestrator queue", () => {
     const lastQueue = [...fanOut.mock.calls].reverse().find((c) => c[2]?.type === "queue_update");
     expect(lastQueue?.[2]).toEqual({ type: "queue_update", items: [] });
   });
+
+  it("forceSendQueued waits for cancel before sending", async () => {
+    const { Agent } = await import("@cursor/sdk");
+
+    function cancellableRun(id: string) {
+      const state = { cancelled: false };
+      return {
+        id,
+        requestId: `req-${id}`,
+        stream: async function* () {
+          while (!state.cancelled) {
+            await new Promise((r) => setTimeout(r, 5));
+          }
+        },
+        wait: async () => ({ status: "cancelled" as const }),
+        supports: (cap: string) => cap === "cancel",
+        cancel: vi.fn().mockImplementation(async () => {
+          state.cancelled = true;
+        }),
+      };
+    }
+
+    let runSeq = 0;
+    const sdk = {
+      agentId: "cursor-agent-3",
+      send: vi.fn().mockImplementation(async () => cancellableRun(`run-force-${++runSeq}`)),
+      close: vi.fn(),
+    };
+    vi.mocked(Agent.create).mockResolvedValue(sdk as never);
+
+    const orchestrator = await import("../server/src/sdk/orchestrator.js");
+    const agent = await orchestrator.createAgent({
+      telegramUserId: 1,
+      projectId: "p1",
+      cwd: "/tmp",
+      title: "Force send",
+    });
+
+    await orchestrator.sendPrompt(agent.id, "running");
+    const queued = await orchestrator.sendPrompt(agent.id, "force me");
+    expect(queued.queued).toBe(true);
+
+    const result = await orchestrator.forceSendQueued(agent.id, queued.queueId!);
+    expect(result.queued).toBeUndefined();
+    expect(sdk.send).toHaveBeenCalledTimes(2);
+    expect(sdk.send.mock.calls[1]?.[0]).toContain("force me");
+  });
 });

@@ -14,6 +14,13 @@ import * as orchestrator from "./sdk/orchestrator.js";
 import * as bridge from "./sdk/stream-bridge.js";
 import * as projectsStream from "./projects-stream-bridge.js";
 
+if (config.mockTelegram && config.telegramBotToken()) {
+  console.error(
+    "Refusing to start: MOCK_TG=true with TELEGRAM_BOT_TOKEN set — mock auth would be accepted on a public tunnel.",
+  );
+  process.exit(1);
+}
+
 initRegistry();
 await orchestrator.startupReconcile();
 
