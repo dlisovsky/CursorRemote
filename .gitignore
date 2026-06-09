@@ -1,15 +1,11 @@
 node_modules/
-.claude/
 dist/
-*.js.map
-.env
-
+tma/dist/
 data/
-releases/
-temp/server.log
-tmp/
-scripts/generate-keys.ts
-azure_token
-openvsx_token
-# marketing/
-.specstory/
+.cursor-remote/
+.env
+*.db
+.DS_Store
+test-results/
+playwright-report/
+.gstack/

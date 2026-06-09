@@ -1,0 +1,11 @@
+# CursorRemote TMA + API tunnel → local backend (serves built TMA from tma/dist)
+# Start: npm run tunnel  (requires dev:server on :4871 and npm run build:tma)
+tunnel: 30606d31-2be4-493e-8e90-6b27b1cd6077
+credentials-file: ~/.cloudflared/30606d31-2be4-493e-8e90-6b27b1cd6077.json
+
+ingress:
+  - hostname: cursorremote.yatrade.org
+    service: http://127.0.0.1:4871
+    originRequest:
+      httpHostHeader: cursorremote.yatrade.org
+  - service: http_status:404

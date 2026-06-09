@@ -1,282 +1,108 @@
 # CursorRemote
 
-Remote control for your local Cursor AI agent — monitor sessions, approve steps, inspect full plans, and send tasks from your phone, tablet, or another computer's browser, or via Telegram, while Cursor runs on your machine.
+Control Cursor agents from Telegram (Mini App) or Chrome during development.
 
-<div align="center">
+**Architecture:** TMA (React) → Backend (Express + WS) → Cursor SDK. The TMA never talks to Cursor directly.
 
-| Mobile web app | Telegram |
-|:-:|:-:|
-| <img src="media/web-app.gif" alt="Mobile web app" width="300"> | <img src="media/telegram.gif" alt="Telegram integration" width="300"> |
+## Requirements
 
-<p><b>Extension UI</b> — CursorRemote sidebar: server status, CDP connection, agent state, and start/stop</p>
-<img src="media/extension_tab.png" alt="CursorRemote extension sidebar with server controls and status" width="380">
+- Node.js 22+ (uses built-in `node:sqlite`)
+- [Cursor API key](https://cursor.com/settings)
+- Telegram bot token (production only)
 
-</div>
-
-## Features
-
-- **Mobile Web Client** -- real-time chat view with Cursor's dark theme, approve/reject buttons, full plan modal, plan model picker, run command cards, mode/model switching
-- **Telegram Integration** -- auto-sync conversations into forum topics, approve via inline buttons, send prompts from any device
-- **Multi-Window Monitoring** -- all Cursor windows polled in parallel via separate CDP connections (no UI switching)
-- **Auto-Topic Creation** -- new chat tabs automatically get a Telegram topic created
-- **VS Code Extension** -- integrated sidebar with server status, start/stop controls, setup wizard, and settings
-- **Persistent State** -- messages, topics, sync, and auth all survive server restarts
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Cursor Extension (optional)                                    │
-│  Spawns server, provides UI, manages lifecycle                  │
-│                                                                 │
-│  Cursor IDE  ──CDP──>  Relay Server  ──socket.io──>  Browser    │
-│  (Windows/Mac)          (Node.js)     ──Bot API───>  Telegram   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-1. **Cursor IDE** runs with Chrome DevTools Protocol enabled (`--remote-debugging-port=9222`)
-2. **Relay Server** connects via CDP, extracts agent chat state from the DOM
-3. **Window Monitor** polls all windows in parallel using separate CDP connections
-4. **Browser Client** displays the conversation in real time on any device
-5. **Telegram Bot** (optional) mirrors data into auto-created forum topics
-
-## Which Setup Should I Use?
-
-| | Extension (recommended) | Standalone |
-|---|---|---|
-| **Best for** | Daily use on your dev machine | Headless servers, CI, or manual configuration |
-| **Install** | One `.vsix` file | Clone repo + `npm install` |
-| **Configuration** | VS Code Settings + Setup Panel | `.env` file |
-| **Server lifecycle** | Auto-starts, sidebar Start/Stop | Manual `npm run dev` or `npm start` |
-| **Status UI** | Sidebar panel with live status | Terminal logs + `/health` endpoint |
-| **Password** | Auto-generated on first install | Manual in `.env` |
-| **Multi-window** | Singleton — one server across all windows | Single process |
-
----
-
-## Setup A: Extension (Recommended)
-
-### 1. Install the Extension
-
-Download the latest `.vsix` from [releases](https://github.com/len5ky/CursorRemote/releases), then install:
+## Quick start
 
 ```bash
-# From the command line
-cursor --install-extension cursor-remote-0.1.46.vsix
-```
-
-Or in Cursor: open the Command Palette (`Ctrl+Shift+P`), run **Extensions: Install from VSIX...**, and select the file.
-
-### 2. Enter Your License Key
-
-Open the **CursorRemote** panel in the activity bar (left sidebar). You'll see a "License Key Required" prompt — click it to enter your key. It's stored securely in the OS credential store via VS Code's Secrets API.
-
-Don't have a key? Get one from the [store](https://cursor-remote.com/buy?utm_source=github&utm_medium=readme&utm_campaign=license).
-
-### 3. Launch Cursor with CDP Enabled
-
-Add `--remote-debugging-port=9222` to your Cursor shortcut, or run:
-
-```powershell
-# Windows
-& "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe" --remote-debugging-port=9222
-```
-
-```bash
-# macOS
-open -a Cursor --args --remote-debugging-port=9222
-```
-
-```bash
-# Linux
-cursor --remote-debugging-port=9222
-```
-
-**Important:** Fully quit and restart Cursor after adding the flag. On macOS use Cmd+Q (not just close the window). Verify: `http://localhost:9222/json` should return JSON.
-
-### 4. Server Auto-Starts
-
-The extension automatically starts the relay server when Cursor launches. Check the **CursorRemote** sidebar panel for live status:
-
-- **Server status** -- Running / Stopped / Disconnected
-- **CDP connection** -- Connected / Disconnected with active workspace name
-- **Agent status** -- idle, running tool, etc. with current mode and model
-- **Connected clients** -- number of browser sessions
-- **Start / Stop buttons** -- control the server directly from the sidebar
-
-If it doesn't auto-start, click **Start Server** in the sidebar or run **CursorRemote: Start Server** from the Command Palette.
-
-### 5. Configure Networking and Connect
-
-Run **CursorRemote: Open Setup Panel** (or click **Open Setup Panel** in the sidebar) to configure:
-
-- **Networking** -- choose Localhost (default), LAN (all interfaces), or a specific IP (Tailscale)
-- **Web Client Password** -- auto-generated on first install; copy it or set your own
-- **Telegram** -- step-by-step wizard with bot token entry, registration token display, and user status
-
-Open `http://<server-ip>:<port>` in any browser on your phone, tablet, or another computer and enter the password.
-
-> **Multi-window:** Only one server instance runs across all Cursor windows. The first window to start becomes the owner; other windows attach as observers and auto-recover if the owner closes.
-
-### Extension Commands
-
-| Command | Description |
-|---------|-------------|
-| `CursorRemote: Start Server` | Start the relay server |
-| `CursorRemote: Stop Server` | Stop the relay server |
-| `CursorRemote: Restart Server` | Restart the relay server |
-| `CursorRemote: Open Web Client` | Open the browser client URL |
-| `CursorRemote: Open Setup Panel` | Open the networking and Telegram setup wizard |
-| `CursorRemote: Show Logs` | Show server logs in Output panel |
-| `CursorRemote: Enter License Key` | Enter and store a license key |
-| `CursorRemote: Buy License` | Open the store URL |
-
-### Extension Settings
-
-All settings are under `cursorRemote.*` in VS Code Settings. Each setting includes inline documentation with links to relevant guides.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `autoStart` | `true` | Auto-start server on launch |
-| `cdpUrl` | `http://127.0.0.1:9222` | Cursor's CDP endpoint |
-| `serverPort` | `3000` | Web server port |
-| `serverHost` | `127.0.0.1` | Bind address (localhost-only by default) |
-| `pollIntervalMs` | `500` | DOM polling frequency (ms) |
-| `debounceMs` | `300` | Broadcast interval (ms) |
-| `logLevel` | `info` | Server log level |
-| `webappPassword` | *(auto-generated)* | Password for the web client |
-| `windowTitleQualifier` | `true` | Include remote qualifier in titles |
-| `telegram.enabled` | `false` | Enable Telegram bot |
-| `telegram.botToken` | -- | Bot token from @BotFather |
-| `telegram.allowedUsers` | -- | Comma-separated allowed user IDs |
-
----
-
-## Setup B: Standalone Server (Without Extension)
-
-Run the relay server directly from the command line — useful for headless machines, remote servers, or if you prefer managing configuration via `.env` files.
-
-### Prerequisites
-
-- Node.js 20+
-- Cursor IDE with `--remote-debugging-port=9222`
-- A browser on the same network (for the web client)
-
-### Install and Run
-
-```bash
-git clone https://github.com/len5ky/CursorRemote.git cursor-ide-remote
-cd cursor-ide-remote
-npm install
 cp .env.example .env
-npm run dev
+# Set CURSOR_API_KEY and PROJECT_PATHS (MOCK_TG=true and VITE_MOCK_TG=true by default)
+
+npm install
+npm run dev:server   # terminal 1 — backend (:4871), accepts mock + real TG auth
+npm run dev:tma      # terminal 2 — Vite dev server (:5187)
 ```
 
-On first run, you'll be prompted for a **license key**. Get one from the [store](https://cursor-remote.com/buy?utm_source=github&utm_medium=readme_standalone&utm_campaign=license). The key is saved to `data/license.key`.
+**Chrome:** open http://localhost:5187 — uses mock initData automatically.
 
-Edit `.env` to configure the server. For Telegram, set `TELEGRAM_ENABLED=true` and `TELEGRAM_BOT_TOKEN`.
+**Telegram Mini App:** `npm run dev:telegram` + `npm run tunnel`, open via your bot — uses real initData; native MainButton/back UI activates automatically.
 
-### Standalone Configuration
+Both work at the same time when `MOCK_TG=true` (backend accepts mock and validates real HMAC).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CDP_URL` | `http://127.0.0.1:9222` | Cursor's CDP endpoint |
-| `SERVER_PORT` | `3000` | Web server port |
-| `SERVER_HOST` | `127.0.0.1` | Bind address |
-| `POLL_INTERVAL_MS` | `500` | DOM polling frequency (ms) |
-| `DEBOUNCE_MS` | `300` | Broadcast interval (ms) |
-| `LOG_LEVEL` | `info` | Log level |
-| `WEBAPP_PASSWORD` | -- | Password for the web UI |
-| `TELEGRAM_ENABLED` | `false` | Enable Telegram bot |
-| `TELEGRAM_BOT_TOKEN` | -- | Bot token from @BotFather |
-| `TELEGRAM_ALLOWED_USERS` | -- | Comma-separated allowed user IDs |
-| `LICENSE_KEY` | -- | License key via env (overrides file) |
-| `DATA_DIR` | `./data` | Data directory for persistent state |
-| `LOG_FORMAT` | `text` | Set to `json` for structured log lines |
+## Environment
 
-### Production
-
-```bash
-npm run build
-npm start
-```
-
-Ensure `data/license.key` exists before running `npm start` (no interactive prompt in production mode).
-
-> **WSL2 users**: see [Setup Guide](docs/setup-guide.md) for port forwarding details.
-
----
-
-## Security
-
-CursorRemote ships with secure defaults out of the box:
-
-- **Localhost-only** -- the server binds to `127.0.0.1` by default, so it's never exposed to the network until you explicitly choose to.
-- **Auto-generated password** (extension) -- a cryptographically random password is created on first install and used to protect the web client.
-- **Encrypted key storage** (extension) -- your license key and password are stored in the OS credential store via VS Code's Secrets API.
-
-### Accessing from another device
-
-**Option A: Tailscale (recommended)** -- install [Tailscale](https://tailscale.com/) on your computer and phone. Your server is accessible over a private WireGuard mesh with no port forwarding needed. See the [Tailscale setup guide](docs/tailscale-setup.md).
-
-**Option B: LAN access** -- open the **Setup Panel** (extension) or set `SERVER_HOST=0.0.0.0` (standalone). The server binds to all interfaces and requires a password.
-
-Both options can be combined for defense in depth.
-
-## Privacy
-
-CursorRemote is **100% self-hosted**. There is no phone-home, no telemetry, no analytics, no usage tracking. The software never connects to our servers — not at startup, not during use, not ever. License validation happens entirely offline against your local key. Your code, your conversations, and your agent activity stay on your machine and your network. We don't see any of it.
-
-## Telegram Setup
-
-The easiest way to set up Telegram is via the **Setup Panel** — run **CursorRemote: Open Setup Panel** and switch to the Telegram tab for a step-by-step wizard that shows your registration token and registered users.
-
-### Manual Setup
-
-1. **Create a bot**: Message `@BotFather` > `/newbot` > copy the token
-2. **Configure**: Set `cursorRemote.telegram.botToken` in VS Code Settings (extension) or `TELEGRAM_BOT_TOKEN` in `.env` (standalone), and enable Telegram
-3. **Create a group**: Create a Telegram supergroup with Topics enabled, add bot as admin with Manage Topics permission
-4. **Register**: Start the server, check the Output panel (extension) or terminal (standalone) for the registration token, send `/register <token>` in the group
-5. **Sync**: Send `/sync` to enable auto-sync. Topics are auto-created for each window + chat tab.
-
-### Bot Commands
-
-| Command | Description |
-|---------|-------------|
-| `/register <token>` | Register yourself (token shown in server output) |
-| `/sync` | Enable auto-sync (active tabs get topics + last 5 messages) |
-| `/sync_all` | Create topics for ALL tabs in all windows |
-| `/unsync` | Disable sync, delete tracked topics |
-| `/cleanup` | Delete stale/untracked topics |
-| `/purge` | Delete ALL topics (nuclear, runs in background) |
-| `/status` | Connection, sync, group ID, agent info |
-| `/history [N]` | Last N messages (default 30), scrolls chat to load more |
-| `/mode` | Show/switch agent mode (switches to topic's window) |
-| `/model` | Show current model |
-| `/plan <text>` | Prompt in Plan mode |
-| `/agent <text>` | Prompt in Agent mode |
-
-Plain text in any topic is sent as a prompt to the mapped Cursor agent.
+| Variable | Description |
+|----------|-------------|
+| `CURSOR_API_KEY` | Cursor API key (required) |
+| `CURSOR_MODEL` | Default `composer-2.5` |
+| `PROJECT_PATHS` | Comma-separated absolute repo paths |
+| `MOCK_TG` | `true` (default dev) — backend accepts mock initData **and** real Telegram HMAC |
+| `VITE_MOCK_TG` | `true` (default dev) — Chrome falls back to mock; Mini App uses real initData when present |
+| `TELEGRAM_BOT_TOKEN` | Bot token for real initData HMAC |
+| `JWT_SECRET` | JWT signing secret |
+| `PORT` | Backend port (default `4871`) |
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Development with hot-reload (prompts for license key if missing) |
-| `npm run build` | Compile TS + copy client |
-| `npm run build:ext` | Bundle the VS Code extension |
-| `npm run watch:ext` | Watch-mode for extension development |
-| `npm run package` | Bump patch version and package .vsix into `releases/` |
-| `npm run release -- patch\|minor\|major` | Bump version, update changelog, create git tag |
-| `npm start` | Run compiled server |
-| `npm run discover` | DOM discovery tool |
+| `npm run dev:server` | Backend API + WebSocket |
+| `npm run dev:tma` | Vite dev server for TMA (Chrome dev at :5187) |
+| `npm run dev:chrome:server` | Alias: backend with `MOCK_TG=true` forced |
+| `npm run dev:chrome` | Alias: Vite with `VITE_MOCK_TG=true` forced |
+| `npm run build:tma` | Production TMA build (served by backend) |
+| `npm run preview:sync` | Alias for `build:tma` — run after UI changes so tunnel shows latest |
+| `npm run watch:tma` | Rebuild TMA on file changes (use with Telegram tunnel) |
+| `npm run dev:all` | Backend + Vite (:5187) + `watch:tma` (one command for local dev) |
+| `npm run tunnel` | Cloudflare tunnel → localhost:4871 |
+| `npm run dev:telegram` | Build TMA + start backend for Telegram |
+| `npm run setup:telegram` | Verify tunnel health + set bot menu button |
+| `npm run sdk:smoke` | Verify Cursor SDK connectivity |
+| `npm run test` | Vitest unit tests |
+| `npm run test:e2e` | Playwright E2E (starts servers) |
+| `npm run typecheck` | TypeScript check |
 
-## Documentation
+## Telegram Mini App (production)
 
-- [Setup Guide](docs/setup-guide.md) -- installation, networking, Telegram, troubleshooting
-- [Tailscale Setup](docs/tailscale-setup.md) -- secure remote access without exposing to the internet
-- [Product Requirements](docs/prd.md) -- features, state model, protocol
-- [Architecture](docs/architecture.md) -- components, data flow, decisions
-- [Telegram PRD](docs/telegram_prd.md) -- message formats, commands
-- [Telegram Architecture](docs/telegram_architecture.md) -- multi-window, queues, lifecycle
-- [Extension PRD](docs/extension_prd.md) -- VS Code extension features, settings, build
+1. Create a bot via [@BotFather](https://t.me/BotFather)
+2. Set `TELEGRAM_BOT_TOKEN` and `PROJECT_PATHS` in `.env` (keep `MOCK_TG=true` for dev, or set both mock flags `false` for production-only auth)
+3. One-time Cloudflare tunnel (if not already created):
+   ```bash
+   cloudflared tunnel create cursorremote
+   cloudflared tunnel route dns cursorremote cursorremote.yourdomain.com
+   ```
+   Config lives in `.cloudflared/cursorremote.yml`. Set `PUBLIC_URL` in `.env` to match the hostname.
+4. Run backend + tunnel:
+   ```bash
+   npm run dev:telegram   # builds TMA + starts API on :4871
+   npm run tunnel         # HTTPS → localhost:4871
+   npm run setup:telegram # verify health + set menu button
+   ```
+5. In BotFather → /myapps → Web App URL = `PUBLIC_URL` (e.g. `https://cursorremote.yatrade.org`)
+
+While iterating on TMA UI for Telegram, run `npm run watch:tma` in a third terminal to auto-rebuild `tma/dist`.
+
+The backend serves the built TMA from `tma/dist` on the same origin (API + WebSocket work over the tunnel).
+
+## Project layout
+
+```
+shared/     Wire protocol types
+server/     Express API, SDK orchestrator, SQLite registry
+tma/        React + Mantine Telegram Mini App
+tests/      Vitest unit tests
+e2e/        Playwright smoke tests
+```
+
+## Features
+
+- Project list from `PROJECT_PATHS`
+- Per-project agents via Cursor SDK
+- Real-time streaming (tools, thinking, assistant text)
+- Stop run, prompt queue, force-send, cancel queued
+- Chat history replay on page reload
+
+## Voice & photos
+
+- **Microphone** — tap to record, tap again to transcribe (local faster-whisper) into the composer
+- **Camera** — attach screenshots; saved under `{project}/.cursor-remote/inbox/` and included in the agent prompt
+
+Requires `pip install faster-whisper` and `TRANSCRIBE_MODEL` in `.env`. Disable with `VOICE_ENABLED=false` or `PHOTOS_ENABLED=false`.
