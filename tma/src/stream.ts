@@ -10,8 +10,10 @@ export function connectAgentStream(
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const url = `${proto}://${location.host}/agents/${agentId}/stream?token=${encodeURIComponent(token ?? "")}&lastSeq=${lastSeq}`;
   const ws = new WebSocket(url);
+  let active = true;
 
   ws.onmessage = (msg) => {
+    if (!active) return;
     const event = JSON.parse(msg.data as string) as WireMessage;
     if (event.type === "replay") {
       for (const e of event.events) onEvent(e);
@@ -20,5 +22,13 @@ export function connectAgentStream(
     onEvent(event);
   };
 
-  return () => ws.close();
+  return () => {
+    active = false;
+    ws.onmessage = null;
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.addEventListener("open", () => ws.close(), { once: true });
+    } else {
+      ws.close();
+    }
+  };
 }

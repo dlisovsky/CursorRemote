@@ -446,16 +446,15 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     }
   }, [agent?.activeRunId, agentId, runId]);
 
-  const mainButtonText = isRunning ? "Stop generating" : "Send";
-  const mainButtonVisible = inTelegram && (isRunning || canSend);
+  const mainButtonVisible = inTelegram && isRunning;
   useTelegramMainButtonInset(mainButtonVisible);
   useTelegramMainButton(
     mainButtonVisible
       ? {
-          text: mainButtonText,
+          text: "Stop generating",
           visible: true,
-          enabled: (isRunning || canSend) && !sending && !transcribing,
-          onClick: () => void (isRunning ? onStop() : onSend()),
+          enabled: true,
+          onClick: () => void onStop(),
         }
       : null,
   );
@@ -720,7 +719,7 @@ function ComposerInput({
       minRows={inTelegram ? 2 : 1}
       maxRows={6}
       styles={{ input: { minHeight: 44, fontSize: 16 } }}
-      style={inTelegram ? undefined : { flex: 1 }}
+      style={{ flex: 1 }}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey && !inTelegram) {
           e.preventDefault();
@@ -787,15 +786,6 @@ function ComposerInput({
     </>
   );
 
-  if (inTelegram) {
-    return (
-      <Stack gap="xs">
-        {textarea}
-        <Group gap="sm" wrap="nowrap">{mediaIcons}</Group>
-      </Stack>
-    );
-  }
-
   return (
     <Group align="flex-end" gap="sm" wrap="nowrap">
       {mediaIcons}
@@ -806,7 +796,7 @@ function ComposerInput({
         variant="filled"
         color="teal"
         loading={sending}
-        disabled={!canSend}
+        disabled={!canSend || transcribing}
         onClick={() => void onSend()}
         aria-label={isRunning ? "Add to queue" : "Send"}
       >

@@ -1,5 +1,6 @@
 import { Badge, Group, Loader, Paper, Text, ThemeIcon } from "@mantine/core";
 import { IconCheck, IconTool, IconX } from "@tabler/icons-react";
+import { runStatusLabel } from "../status.js";
 import type { ChatItem } from "./types.js";
 
 export function ToolCallCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
@@ -27,7 +28,7 @@ export function ToolCallCard({ item }: { item: Extract<ChatItem, { kind: "tool" 
               {item.name}
             </Text>
             <Badge size="xs" variant="light" color={color}>
-              {item.status}
+              {runStatusLabel(item.status)}
             </Badge>
           </Group>
           {item.detail && (

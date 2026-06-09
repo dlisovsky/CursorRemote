@@ -10,7 +10,7 @@
 ## Design (done)
 
 - [x] `/design-review` UI/UX pass — see `DESIGN.md` and `.gstack/design-reports/`
-- [ ] Tool card status labels (`Running` vs `running`) — polish
+- [x] Tool card status labels (`Running` vs `running`) — fixed in /qa
 - [ ] Telegram haptic on send/stop — polish
 
 ## Future ideas
