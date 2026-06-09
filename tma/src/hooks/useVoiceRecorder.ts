@@ -1,9 +1,20 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useVoiceRecorder() {
   const [recording, setRecording] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    if (!recording) {
+      setElapsedMs(0);
+      return;
+    }
+    const started = Date.now();
+    const id = setInterval(() => setElapsedMs(Date.now() - started), 200);
+    return () => clearInterval(id);
+  }, [recording]);
 
   const stop = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
@@ -44,5 +55,5 @@ export function useVoiceRecorder() {
     return null;
   }, [recording, start, stop]);
 
-  return { recording, start, stop, toggle };
+  return { recording, elapsedMs, start, stop, toggle };
 }

@@ -1,4 +1,4 @@
-import { Image, Skeleton } from "@mantine/core";
+import { Image, Skeleton, UnstyledButton } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { ensureAuth } from "../auth.js";
 
@@ -7,11 +7,13 @@ export function AuthImage({
   alt,
   w = 120,
   h = 120,
+  onClick,
 }: {
   src: string;
   alt: string;
   w?: number;
   h?: number;
+  onClick?: () => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
 
@@ -39,5 +41,11 @@ export function AuthImage({
   }, [src]);
 
   if (!url) return <Skeleton w={w} h={h} radius="sm" />;
-  return <Image src={url} alt={alt} w={w} h={h} fit="cover" radius="sm" />;
+  const img = <Image src={url} alt={alt} w={w} h={h} fit="cover" radius="sm" />;
+  if (!onClick) return img;
+  return (
+    <UnstyledButton onClick={onClick} aria-label={`View ${alt}`} style={{ display: "block", cursor: "pointer" }}>
+      {img}
+    </UnstyledButton>
+  );
 }

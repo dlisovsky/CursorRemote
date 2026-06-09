@@ -38,6 +38,43 @@ export async function startupReconcile(): Promise<void> {
   }
 }
 
+export async function importAgentFromCursor(input: {
+  telegramUserId: number;
+  projectId: string;
+  cwd: string;
+  title: string;
+  cursorAgentId: string;
+}): Promise<ReturnType<typeof store.createAgent>> {
+  const existing = store.findAgentByCursorAgentId(input.telegramUserId, input.cursorAgentId);
+  if (existing) {
+    await getOrResumeHandle(existing.id);
+    return existing;
+  }
+
+  const apiKey = config.cursorApiKey();
+  try {
+    const sdk = await Agent.resume(input.cursorAgentId, {
+      apiKey,
+      model: config.model,
+      local: { cwd: input.cwd },
+    });
+    const id = randomUUID();
+    const row = store.createAgent({
+      id,
+      telegramUserId: input.telegramUserId,
+      projectId: input.projectId,
+      cwd: input.cwd,
+      title: input.title,
+      cursorAgentId: input.cursorAgentId,
+    });
+    handles.set(id, sdk);
+    return row;
+  } catch (err) {
+    const message = err instanceof CursorAgentError ? err.message : String(err);
+    throw Object.assign(new Error(message), { code: "agent_create_failed" as WireErrorCode });
+  }
+}
+
 export async function createAgent(input: {
   telegramUserId: number;
   projectId: string;

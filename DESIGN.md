@@ -67,9 +67,9 @@
 - **Max content width:** Chat bubbles `max-width: 92%`; projects in `Container size="sm"`
 - **Border radius:** Mantine `defaultRadius: md`; pills `radius="xl"` on composer icon buttons
 - **Projects list:** Accordion `variant="separated"`; default expand only projects **with agents** (max 1 open in Telegram)
-- **Chat:** `AppShell` — compact header (48px TG / 56px Chrome), scrollable main, auto-height footer
-- **Composer (Telegram):** Two rows — full-width textarea, then media icon row; MainButton handles Send/Stop
-- **Composer (Chrome):** Single row — icons + textarea + send `ActionIcon`
+- **Chat:** `AppShell` `mode="static"` (grid layout — main never scrolls under footer), compact header (48px TG / 56px Chrome), scrollable main, auto-height footer with `max(env(safe-area-inset-bottom), --tg-safe-bottom)` padding
+- **Composer (Telegram + Chrome):** Single row — textarea (flex, left) + attach menu (library / camera) + send or mic (right; send when message ready)
+- **Send / Stop:** In-app teal send + red stop bar in both Telegram and Chrome (no native MainButton)
 
 ## Components
 
@@ -92,9 +92,10 @@
 
 ## Telegram integration
 
-- **Dev auth:** `MOCK_TG=true` + `VITE_MOCK_TG=true` — Chrome uses mock initData; Mini App uses real initData when present (`isTelegramWebApp()` detects real initData only)
-- Hide in-app back button, send button, and stop bar when `isTelegramWebApp()`
-- Use `BackButton` and `MainButton` WebApp APIs
+- **Dev auth:** `MOCK_TG=true` + `VITE_MOCK_TG=true` — Chrome uses mock initData; Mini App uses real initData when present
+- **Layout preview:** `VITE_FORCE_TG_UI=true` (set by `npm run dev:chrome`) — two-row composer + project subtitle without real initData
+- **TG layout** (`isTelegramLayout()`): hide in-app back button; show project name under agent title; two-row composer
+- **Real Telegram only** (`isTelegramWebApp()`): native `BackButton`, safe-area insets, haptic on send/stop, bottom notifications
 - Notifications: `bottom-center` in TG, `top-center` in Chrome
 - Expand WebApp on launch; sync header/background color to `#1a1b1e`
 
@@ -114,7 +115,9 @@
 |------|----------|-----------|
 | 2026-06-09 | Geist Sans + Mantine 7 dark + teal accent | Readable dev-tool aesthetic; avoids generic Inter/Roboto slop |
 | 2026-06-09 | Collapsed empty project accordions | Mobile scroll reduction (/design-review FINDING-001) |
-| 2026-06-09 | Two-row TG composer | Full-width prompt input on narrow screens (FINDING-002) |
+| 2026-06-09 | Two-row TG composer | Full-width prompt input on narrow screens (FINDING-TG-001) |
+| 2026-06-09 | In-app send/stop (no MainButton) | Consistent controls in TG and Chrome; user preference |
+| 2026-06-09 | `VITE_FORCE_TG_UI` for Chrome | Preview TG layout without real Mini App (FINDING-TG-003) |
 | 2026-06-09 | Separate photo library + camera icons | User preference for both attach paths |
 | 2026-06-09 | DESIGN.md as source of truth | gstack `/design-review`, `/qa`, `/plan-design-review` calibration |
 

@@ -1,4 +1,4 @@
-import type { AgentInfo, AuthResponse, SendResponse } from "../../shared/types.js";
+import type { AgentInfo, AuthResponse, IdeSessionInfo, IdeTranscriptLine, SendResponse } from "../../shared/types.js";
 
 export type AgentDetail = AgentInfo & { activeRunId?: string };
 import { ensureAuth } from "./auth.js";
@@ -26,6 +26,7 @@ export interface ProjectWithAgents {
   name: string;
   path: string;
   agents: AgentInfo[];
+  ideSessions: IdeSessionInfo[];
 }
 
 export async function login(): Promise<AuthResponse> {
@@ -35,6 +36,23 @@ export async function login(): Promise<AuthResponse> {
 
 export function fetchProjects(): Promise<ProjectWithAgents[]> {
   return api("/projects");
+}
+
+export function fetchIdeSession(
+  projectId: string,
+  sessionId: string,
+): Promise<{
+  sessionId: string;
+  title: string;
+  subtitle: string;
+  lines: IdeTranscriptLine[];
+  messageCount: number;
+}> {
+  return api(`/projects/${projectId}/ide-sessions/${sessionId}`);
+}
+
+export function resumeIdeSession(projectId: string, sessionId: string): Promise<AgentInfo> {
+  return api(`/projects/${projectId}/ide-sessions/${sessionId}/resume`, { method: "POST", body: "{}" });
 }
 
 export function createAgent(projectId: string, title?: string): Promise<AgentInfo> {

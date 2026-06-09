@@ -66,6 +66,20 @@ export function createAgent(input: {
   return getAgent(input.id)!;
 }
 
+export function findAgentByCursorAgentId(
+  telegramUserId: number,
+  cursorAgentId: string,
+): AgentInfo | null {
+  const row = asRows<AgentRow>(
+    db
+      .prepare(
+        `SELECT * FROM agents WHERE telegram_user_id = ? AND cursor_agent_id = ? AND archived_at IS NULL LIMIT 1`,
+      )
+      .all(telegramUserId, cursorAgentId),
+  )[0];
+  return row ? rowToAgent(row) : null;
+}
+
 export function getAgent(id: string): AgentInfo | null {
   const row = getAgentRow(id);
   return row ? rowToAgent(row) : null;

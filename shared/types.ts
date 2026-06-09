@@ -40,6 +40,26 @@ export interface AgentInfo {
   createdAt: string;
 }
 
+/** Cursor IDE Composer chat discovered from ~/.cursor/projects/.../agent-transcripts/. */
+export interface IdeSessionInfo {
+  id: string;
+  /** Cursor Composer sidebar title (composer.composerHeaders). */
+  title: string;
+  /** Cursor Composer subtitle — last activity summary. */
+  subtitle: string;
+  updatedAt: string;
+  linkedCursorAgentId: string | null;
+  source: "cursor_ide";
+  /** True when session maps to an SDK agent ID and can be imported for remote chat. */
+  canResume: boolean;
+}
+
+export interface IdeTranscriptLine {
+  role: "user" | "assistant";
+  text: string;
+  tools?: { name: string; summary: string }[];
+}
+
 export interface QueueItem {
   id: string;
   text: string;

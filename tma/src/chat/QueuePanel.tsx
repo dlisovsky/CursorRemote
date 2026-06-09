@@ -36,11 +36,12 @@ export function QueuePanel({
             </div>
             <Group gap={4} wrap="nowrap">
               <Button
-                size="compact-sm"
+                size="sm"
                 variant="light"
                 color="orange"
-                leftSection={<IconArrowUp size={14} />}
+                leftSection={<IconArrowUp size={16} />}
                 onClick={() => onForceSend(item.id)}
+                styles={{ root: { minHeight: 44 } }}
               >
                 Now
               </Button>

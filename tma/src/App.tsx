@@ -2,14 +2,20 @@ import { useEffect, useState } from "react";
 import { Alert, Center, Container, Loader, Stack, Text, Title } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { login } from "./api.js";
+import type { IdeSessionInfo } from "../../shared/types.js";
 import { ProjectsPage } from "./pages/Projects.js";
 import { AgentChatPage } from "./pages/AgentChat.js";
+import { IdeSessionPage } from "./pages/IdeSession.js";
 import { isTelegramWebApp, useTelegramApp } from "./useTelegramApp.js";
 
 export function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentId, setAgentId] = useState<string | null>(null);
+  const [ideSession, setIdeSession] = useState<{
+    projectId: string;
+    session: IdeSessionInfo;
+  } | null>(null);
 
   useTelegramApp();
 
@@ -42,6 +48,23 @@ export function App() {
     );
   }
 
+  if (ideSession) {
+    return (
+      <IdeSessionPage
+        projectId={ideSession.projectId}
+        sessionId={ideSession.session.id}
+        title={ideSession.session.title}
+        subtitle={ideSession.session.subtitle}
+        canResume={ideSession.session.canResume}
+        onBack={() => setIdeSession(null)}
+        onResumed={(agentId) => {
+          setIdeSession(null);
+          setAgentId(agentId);
+        }}
+      />
+    );
+  }
+
   if (agentId) {
     return <AgentChatPage agentId={agentId} onBack={() => setAgentId(null)} />;
   }
@@ -60,7 +83,10 @@ export function App() {
         <Title order={inTelegram ? 4 : 3} fw={500}>
           {inTelegram ? "Projects" : "Your projects"}
         </Title>
-        <ProjectsPage onOpenAgent={setAgentId} />
+        <ProjectsPage
+          onOpenAgent={setAgentId}
+          onOpenIdeSession={(projectId, session) => setIdeSession({ projectId, session })}
+        />
       </Stack>
     </Container>
   );

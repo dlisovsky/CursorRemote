@@ -6,14 +6,18 @@ import {
   Badge,
   Box,
   Button,
+  Center,
+  Chip,
   Group,
   Image,
+  Menu,
   Paper,
   ScrollArea,
   Stack,
   Text,
   Textarea,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
@@ -23,6 +27,7 @@ import {
   IconBrain,
   IconCamera,
   IconMicrophone,
+  IconPaperclip,
   IconPhoto,
   IconPlayerStop,
   IconSend,
@@ -36,6 +41,7 @@ import {
 import { ActivityStrip } from "../chat/ActivityStrip.js";
 import { QueuePanel } from "../chat/QueuePanel.js";
 import { ToolCallCard } from "../chat/ToolCallCard.js";
+import { ToolBatchCard, groupConsecutiveTools } from "../chat/ToolBatchCard.js";
 import type { ChatItem } from "../chat/types.js";
 import { toolDetail } from "../chat/types.js";
 import {
@@ -44,6 +50,7 @@ import {
   cancelRun,
   fetchAgent,
   fetchAgentHistory,
+  fetchProjects,
   forceSendQueued,
   sendPrompt,
   transcribeVoice,
@@ -58,22 +65,54 @@ import { MarkdownText } from "../chat/MarkdownText.js";
 import { agentStatusColor, runStatusLabel } from "../status.js";
 import { connectAgentStream } from "../stream.js";
 import {
+  isTelegramLayout,
   isTelegramWebApp,
+  telegramHaptic,
   useTelegramBackButton,
-  useTelegramMainButton,
-  useTelegramMainButtonInset,
 } from "../useTelegramApp.js";
+
+function formatRecordingMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function imageOnlyLabel(count: number): string {
+  return count === 1 ? "1 image" : `${count} images`;
+}
+
+const SUGGESTED_PROMPTS = [
+  "Fix the latest bug",
+  "Explain this codebase",
+  "Review my changes",
+];
+
+type DisplayItem = ChatItem | { kind: "tool_batch"; id: string; tools: { name: string; detail?: string; status: "running" | "completed" | "error" }[] };
+
+function messageTopMargin(item: DisplayItem, prev: DisplayItem | undefined): number {
+  if (!prev) return 0;
+  const itemKind = item.kind === "tool_batch" ? "tool" : item.kind;
+  const prevKind = prev.kind === "tool_batch" ? "tool" : prev.kind;
+  if (prevKind === "user" && itemKind === "assistant") return 4;
+  if (prevKind === "assistant" && itemKind === "thinking") return 4;
+  if (prevKind === "thinking" && itemKind === "assistant") return 4;
+  if (prevKind === "tool" && (itemKind === "assistant" || itemKind === "tool")) return 4;
+  if (prevKind === "assistant" && itemKind === "user") return 14;
+  if (prevKind === "user" && itemKind === "user") return 14;
+  return 8;
+}
 
 export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: () => void }) {
   const inTelegram = isTelegramWebApp();
+  const tgLayout = isTelegramLayout();
   const [agent, setAgent] = useState<AgentDetail | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [transcribing, setTranscribing] = useState(false);
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const { recording, toggle: toggleRecording, stop: stopRecording } = useVoiceRecorder();
+  const { recording, elapsedMs, toggle: toggleRecording, stop: stopRecording } = useVoiceRecorder();
   const [status, setStatus] = useState<AgentStatus | "finished" | "cancelled">("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -83,6 +122,8 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
   const assistantBuf = useRef("");
   const toolSeq = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const initialScrollDone = useRef(false);
 
   useTelegramBackButton(inTelegram ? onBack : null);
 
@@ -103,6 +144,15 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
   }, [refreshAgent]);
 
   useEffect(() => {
+    if (!agent?.projectId) return;
+    void fetchProjects().then((projects) => {
+      const project = projects.find((p) => p.id === agent.projectId);
+      setProjectName(project?.name ?? null);
+    });
+  }, [agent?.projectId]);
+
+  useEffect(() => {
+    initialScrollDone.current = false;
     void fetchAgentHistory(agentId).then(({ events }) => {
       const historical = chatItemsFromHistory(events, (fileId) => attachmentUrl(agentId, fileId));
       if (historical.length > 0) setItems(historical);
@@ -265,8 +315,28 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     return disconnect;
   }, [agentId, handleWireEvent]);
 
+  const displayItems = useMemo(() => groupConsecutiveTools(items), [items]);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const scrollToBottom = (behavior: ScrollBehavior) => {
+      const el = viewportRef.current;
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior });
+        return;
+      }
+      bottomRef.current?.scrollIntoView({ behavior });
+    };
+
+    if (!initialScrollDone.current && items.length > 0) {
+      requestAnimationFrame(() => {
+        scrollToBottom("instant");
+        initialScrollDone.current = true;
+      });
+      return;
+    }
+    if (initialScrollDone.current) {
+      scrollToBottom("smooth");
+    }
   }, [items, queue]);
 
   const isRunning = status === "running";
@@ -287,7 +357,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     if ((!prompt && attachments.length === 0) || sending) return;
 
     const userId = `u-${Date.now()}`;
-    const displayText = prompt || `📷 ${attachments.length} image(s)`;
+    const displayText = prompt || imageOnlyLabel(attachments.length);
     const outgoing: OutgoingAttachment[] = attachments.map((a) => ({
       name: a.name,
       mime: a.mime,
@@ -310,6 +380,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     ]);
     assistantBuf.current = "";
     setSending(true);
+    telegramHaptic("light");
 
     try {
       const res = await sendPrompt(agentId, prompt, outgoing);
@@ -438,6 +509,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
     const id = runId ?? agent?.activeRunId;
     if (!id) return;
     try {
+      telegramHaptic("medium");
       await cancelRun(agentId, id);
       notifications.show({ title: "Stopping…", message: "Cancelling the current run.", color: "orange" });
     } catch (err) {
@@ -445,19 +517,6 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       notifications.show({ title: "Stop failed", message, color: "red" });
     }
   }, [agent?.activeRunId, agentId, runId]);
-
-  const mainButtonVisible = inTelegram && isRunning;
-  useTelegramMainButtonInset(mainButtonVisible);
-  useTelegramMainButton(
-    mainButtonVisible
-      ? {
-          text: "Stop generating",
-          visible: true,
-          enabled: true,
-          onClick: () => void onStop(),
-        }
-      : null,
-  );
 
   function confirmForceSend(queueId: string) {
     modals.openConfirmModal({
@@ -495,71 +554,117 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
 
   return (
     <AppShell
-      header={{ height: inTelegram ? 48 : 56 }}
+      mode="static"
+      header={{ height: tgLayout ? "auto" : 56 }}
       footer={{ height: "auto" }}
       padding={0}
       styles={{
-        main: { display: "flex", flexDirection: "column", height: "100dvh" },
+        root: { height: "100dvh", overflow: "hidden" },
+        main: {
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+        },
         header: inTelegram
-          ? { paddingTop: "var(--tg-safe-top)", background: "var(--mantine-color-body)" }
+          ? {
+              paddingTop: "var(--tg-safe-top)",
+              minHeight: tgLayout ? 40 : 48,
+              background: "var(--mantine-color-body)",
+            }
           : undefined,
         footer: {
-          paddingBottom:
-            "calc(var(--mantine-spacing-sm) + var(--tg-safe-bottom) + var(--tg-main-button))",
-          background: "var(--mantine-color-body)",
+          height: "auto",
+          paddingBottom: tgLayout
+            ? "calc(var(--mantine-spacing-lg) + max(env(safe-area-inset-bottom, 0px), var(--tg-safe-bottom), 16px))"
+            : "calc(var(--mantine-spacing-md) + max(env(safe-area-inset-bottom, 0px), var(--tg-safe-bottom)))",
+          background: tgLayout ? "var(--mantine-color-dark-7)" : "var(--mantine-color-body)",
           borderTop: "1px solid var(--mantine-color-default-border)",
         },
       }}
     >
-      <AppShell.Header px={inTelegram ? "sm" : "md"}>
+      <AppShell.Header px={tgLayout ? "sm" : "md"} py={tgLayout ? 6 : undefined}>
         <Group h="100%" justify="space-between" wrap="nowrap" gap="sm">
           <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-            {!inTelegram && (
+            {!tgLayout && (
               <ActionIcon size={44} variant="subtle" color="gray" onClick={onBack} aria-label="Back">
                 <IconArrowLeft size={20} />
               </ActionIcon>
             )}
             <div style={{ minWidth: 0 }}>
-              <Title order={5} lineClamp={1}>
-                {agent?.title ?? "Agent"}
-              </Title>
-              {!inTelegram && (
-                <Text c="dimmed" size="xs" lineClamp={1}>
-                  {agent ? DEFAULT_CURSOR_MODEL : "Loading…"}
-                </Text>
+              {tgLayout ? (
+                <Title order={5} lineClamp={1}>
+                  {projectName ?? (agent ? "Loading…" : "Agent")}
+                </Title>
+              ) : (
+                <>
+                  <Title order={5} lineClamp={1}>
+                    {agent?.title ?? "Agent"}
+                  </Title>
+                  <Text c="dimmed" size="xs" lineClamp={1}>
+                    {agent ? DEFAULT_CURSOR_MODEL : "Loading…"}
+                  </Text>
+                </>
               )}
             </div>
           </Group>
-          <Badge
-            color={agentStatusColor(isRunning ? "running" : (agent?.status ?? "idle"))}
-            variant={isRunning ? "filled" : "light"}
-            size={inTelegram ? "md" : "sm"}
-          >
-            {runStatusLabel(isRunning ? "running" : (agent?.status ?? status))}
-          </Badge>
+          <StatusBadge
+            status={isRunning ? "running" : (agent?.status ?? status)}
+            size={tgLayout ? "md" : "sm"}
+          />
         </Group>
       </AppShell.Header>
 
       <AppShell.Main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <ActivityStrip label={activityLabel} />
-        <ScrollArea style={{ flex: 1 }} type="auto" offsetScrollbars>
-          <Stack gap="sm" p={inTelegram ? "sm" : "md"} pb="xl" style={{ alignItems: "stretch" }}>
+        {!tgLayout && <ActivityStrip label={activityLabel} />}
+        <ScrollArea
+          style={{ flex: 1, minHeight: 0 }}
+          type="auto"
+          offsetScrollbars
+          viewportRef={viewportRef}
+        >
+          <Stack
+            gap={0}
+            p={tgLayout ? "sm" : "md"}
+            pb={tgLayout ? 20 : 16}
+            style={{ alignItems: "stretch" }}
+          >
             {items.length === 0 && !isRunning && (
-              <Text c="dimmed" size="sm" ta="center" py="xl">
-                {inTelegram ? "Send a prompt to start." : "Send a prompt to start the agent."}
-              </Text>
+              <Stack gap="md" py="xl" px="xs" align="center">
+                <Text c="dimmed" size="sm" ta="center">
+                  {tgLayout ? "Send a prompt to start." : "Send a prompt to start the agent."}
+                </Text>
+                <Group gap="xs" justify="center">
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <Chip
+                      key={prompt}
+                      variant="light"
+                      size="sm"
+                      onClick={() => setText(prompt)}
+                    >
+                      {prompt}
+                    </Chip>
+                  ))}
+                </Group>
+              </Stack>
             )}
-            {items.map((item) => (
-              <ChatItemView key={item.id} item={item} />
+            {displayItems.map((item, i) => (
+              <ChatItemView
+                key={item.kind === "tool_batch" ? item.id : item.id}
+                item={item}
+                mt={messageTopMargin(item, displayItems[i - 1])}
+              />
             ))}
             <div ref={bottomRef} />
           </Stack>
         </ScrollArea>
       </AppShell.Main>
 
-      <AppShell.Footer p={inTelegram ? "sm" : "md"} pt="xs" withBorder={!inTelegram}>
-        <Stack gap="sm">
-          {isRunning && !inTelegram && (
+      <AppShell.Footer px={tgLayout ? "sm" : "md"} pt={tgLayout ? "sm" : "xs"} withBorder>
+        <Stack gap="sm" pb={tgLayout ? "xs" : 0}>
+          {tgLayout && activityLabel && <ActivityStrip label={activityLabel} compact />}
+          {isRunning && (
             <Button
               fullWidth
               color="red"
@@ -567,9 +672,17 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
               size="md"
               leftSection={<IconPlayerStop size={18} />}
               onClick={() => void onStop()}
+              styles={{ root: { minHeight: 44 } }}
             >
               Stop generating
             </Button>
+          )}
+          {(recording || transcribing) && (
+            <Text size="xs" c={recording ? "red" : "dimmed"} ta="center">
+              {transcribing
+                ? "Transcribing…"
+                : `Recording ${formatRecordingMs(elapsedMs)} — tap mic again to transcribe`}
+            </Text>
           )}
           <QueuePanel items={queue} onForceSend={confirmForceSend} onCancel={onCancelQueued} />
           <AttachmentPreview
@@ -583,7 +696,7 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
             }
           />
           <ComposerInput
-            inTelegram={inTelegram}
+            tgLayout={tgLayout}
             text={text}
             setText={setText}
             placeholder={composerPlaceholder}
@@ -605,8 +718,35 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
   );
 }
 
-function ChatItemView({ item }: { item: ChatItem }) {
-  if (item.kind === "tool") return <ToolCallCard item={item} />;
+function StatusBadge({
+  status,
+  size,
+}: {
+  status: AgentStatus | "finished" | "cancelled";
+  size: "sm" | "md";
+}) {
+  const running = status === "running";
+  return (
+    <Badge
+      color={agentStatusColor(running ? "running" : status)}
+      variant={running ? "filled" : "light"}
+      size={size}
+      leftSection={running ? <span className="status-pulse-dot" /> : undefined}
+    >
+      {runStatusLabel(status)}
+    </Badge>
+  );
+}
+
+function ChatItemView({ item, mt = 0 }: { item: DisplayItem; mt?: number }) {
+  if (item.kind === "tool_batch") {
+    return (
+      <Box mt={mt} style={{ alignSelf: "flex-start", maxWidth: "92%" }}>
+        <ToolBatchCard tools={item.tools} />
+      </Box>
+    );
+  }
+  if (item.kind === "tool") return <Box mt={mt}><ToolCallCard item={item} /></Box>;
 
   if (item.kind === "thinking") {
     return (
@@ -630,12 +770,20 @@ function ChatItemView({ item }: { item: ChatItem }) {
   const isUser = item.kind === "user";
 
   return (
-    <Box style={{ alignSelf: isUser ? "flex-end" : "flex-start", maxWidth: "92%" }}>
+    <Box
+      mt={mt}
+      style={{ alignSelf: isUser ? "flex-end" : "flex-start", maxWidth: "92%" }}
+    >
       <Paper
         p="sm"
         radius="md"
-        bg={isUser ? "teal.9" : "dark.6"}
+        bg={isUser ? "teal.9" : "dark.5"}
         withBorder={!isUser}
+        style={
+          !isUser
+            ? { borderLeft: "3px solid var(--mantine-color-teal-6)" }
+            : undefined
+        }
         opacity={item.kind === "assistant" && item.cancelled ? 0.65 : 1}
       >
         {isUser && item.queued && (
@@ -645,13 +793,9 @@ function ChatItemView({ item }: { item: ChatItem }) {
         )}
         {isUser && item.kind === "user" && item.images && item.images.length > 0 && (
           <Group gap="xs" mb={item.text ? 6 : 0}>
-            {item.images.map((img) =>
-              img.url.startsWith("blob:") ? (
-                <Image key={img.id} src={img.url} alt={img.name} w={96} h={96} fit="cover" radius="sm" />
-              ) : (
-                <AuthImage key={img.id} src={img.url} alt={img.name} w={96} h={96} />
-              ),
-            )}
+            {item.images.map((img) => (
+              <ChatMessageImage key={img.id} src={img.url} alt={img.name} />
+            ))}
           </Group>
         )}
         {item.kind === "assistant" && !item.streaming ? (
@@ -676,8 +820,66 @@ function ChatItemView({ item }: { item: ChatItem }) {
   );
 }
 
+function ChatMessageImage({ src, alt }: { src: string; alt: string }) {
+  const openPreview = () => {
+    modals.open({
+      title: alt,
+      centered: true,
+      size: "lg",
+      children: (
+        <Center>
+          {src.startsWith("blob:") ? (
+            <Image src={src} alt={alt} maw="100%" mah="70vh" fit="contain" radius="sm" />
+          ) : (
+            <AuthImage src={src} alt={alt} w={320} h={320} />
+          )}
+        </Center>
+      ),
+    });
+  };
+
+  if (src.startsWith("blob:")) {
+    return (
+      <UnstyledButton onClick={openPreview} aria-label={`View ${alt}`} style={{ cursor: "pointer" }}>
+        <Image src={src} alt={alt} w={96} h={96} fit="cover" radius="sm" />
+      </UnstyledButton>
+    );
+  }
+
+  return <AuthImage src={src} alt={alt} w={96} h={96} onClick={openPreview} />;
+}
+
+function ComposerAttachButton({
+  libraryInputRef,
+  cameraInputRef,
+  size = 44,
+}: {
+  libraryInputRef: React.RefObject<HTMLInputElement | null>;
+  cameraInputRef: React.RefObject<HTMLInputElement | null>;
+  size?: number;
+}) {
+  const iconSize = size >= 44 ? 20 : 18;
+  return (
+    <Menu position="top-end" withinPortal>
+      <Menu.Target>
+        <ActionIcon size={size} radius="xl" variant="light" color="gray" aria-label="Attach">
+          <IconPaperclip size={iconSize} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item leftSection={<IconPhoto size={16} />} onClick={() => libraryInputRef.current?.click()}>
+          Photo library
+        </Menu.Item>
+        <Menu.Item leftSection={<IconCamera size={16} />} onClick={() => cameraInputRef.current?.click()}>
+          Take photo
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 function ComposerInput({
-  inTelegram,
+  tgLayout,
   text,
   setText,
   placeholder,
@@ -693,7 +895,7 @@ function ComposerInput({
   cameraInputRef,
   onPhotoSelected,
 }: {
-  inTelegram: boolean;
+  tgLayout: boolean;
   text: string;
   setText: (v: string) => void;
   placeholder: string;
@@ -709,6 +911,9 @@ function ComposerInput({
   cameraInputRef: React.RefObject<HTMLInputElement | null>;
   onPhotoSelected: (file: File | null) => void;
 }) {
+  const actionSize = tgLayout ? 40 : 44;
+  const iconSize = tgLayout ? 18 : 20;
+
   const textarea = (
     <Textarea
       placeholder={placeholder}
@@ -716,12 +921,12 @@ function ComposerInput({
       onChange={(e) => setText(e.currentTarget.value)}
       onPaste={onPaste}
       autosize
-      minRows={inTelegram ? 2 : 1}
-      maxRows={6}
-      styles={{ input: { minHeight: 44, fontSize: 16 } }}
-      style={{ flex: 1 }}
+      minRows={1}
+      maxRows={tgLayout ? 4 : 6}
+      styles={{ input: { minHeight: tgLayout ? 40 : 44, fontSize: 16 } }}
+      style={{ flex: 1, minWidth: 0, width: "100%" }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey && !inTelegram) {
+        if (e.key === "Enter" && !e.shiftKey && !tgLayout) {
           e.preventDefault();
           void onSend();
         }
@@ -729,39 +934,23 @@ function ComposerInput({
     />
   );
 
-  const mediaIcons = (
+  const sendButton = (
+    <ActionIcon
+      size={actionSize}
+      radius="xl"
+      variant="filled"
+      color="teal"
+      loading={sending}
+      disabled={!canSend || transcribing || recording}
+      onClick={() => void onSend()}
+      aria-label={isRunning ? "Add to queue" : "Send"}
+    >
+      <IconSend size={iconSize} />
+    </ActionIcon>
+  );
+
+  const fileInputs = (
     <>
-      <ActionIcon
-        size={44}
-        radius="xl"
-        variant={recording ? "filled" : "light"}
-        color={recording ? "red" : "gray"}
-        loading={transcribing}
-        onClick={onVoice}
-        aria-label={recording ? "Stop recording" : "Voice input"}
-      >
-        <IconMicrophone size={20} />
-      </ActionIcon>
-      <ActionIcon
-        size={44}
-        radius="xl"
-        variant="light"
-        color="gray"
-        onClick={() => libraryInputRef.current?.click()}
-        aria-label="Choose from photo library"
-      >
-        <IconPhoto size={20} />
-      </ActionIcon>
-      <ActionIcon
-        size={44}
-        radius="xl"
-        variant="light"
-        color="gray"
-        onClick={() => cameraInputRef.current?.click()}
-        aria-label="Take photo"
-      >
-        <IconCamera size={20} />
-      </ActionIcon>
       <input
         ref={libraryInputRef}
         type="file"
@@ -786,22 +975,49 @@ function ComposerInput({
     </>
   );
 
+  const voiceButton = (
+    <ActionIcon
+      size={actionSize}
+      radius="xl"
+      variant={recording ? "filled" : "light"}
+      color={recording ? "red" : "gray"}
+      loading={transcribing}
+      onClick={onVoice}
+      aria-label={recording ? "Stop recording" : "Voice input"}
+    >
+      <IconMicrophone size={iconSize} />
+    </ActionIcon>
+  );
+
+  const attachButton = (
+    <ComposerAttachButton
+      libraryInputRef={libraryInputRef}
+      cameraInputRef={cameraInputRef}
+      size={actionSize}
+    />
+  );
+
+  if (tgLayout) {
+    return (
+      <Stack gap={6} style={{ width: "100%" }}>
+        {fileInputs}
+        {textarea}
+        <Group justify="flex-end" gap={6} wrap="nowrap">
+          {attachButton}
+          {voiceButton}
+          {sendButton}
+        </Group>
+      </Stack>
+    );
+  }
+
   return (
-    <Group align="flex-end" gap="sm" wrap="nowrap">
-      {mediaIcons}
+    <Group align="flex-end" gap="xs" wrap="nowrap" style={{ width: "100%" }}>
+      {fileInputs}
       {textarea}
-      <ActionIcon
-        size={44}
-        radius="xl"
-        variant="filled"
-        color="teal"
-        loading={sending}
-        disabled={!canSend || transcribing}
-        onClick={() => void onSend()}
-        aria-label={isRunning ? "Add to queue" : "Send"}
-      >
-        <IconSend size={20} />
-      </ActionIcon>
+      {attachButton}
+      {voiceButton}
+      {sendButton}
     </Group>
   );
 }

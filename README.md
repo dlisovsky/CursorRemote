@@ -49,7 +49,9 @@ Both work at the same time when `MOCK_TG=true` (backend accepts mock and validat
 | `npm run dev:chrome:server` | Alias: backend with `MOCK_TG=true` forced |
 | `npm run dev:chrome` | Alias: Vite with `VITE_MOCK_TG=true` forced |
 | `npm run build:tma` | Production TMA build (served by backend) |
+| `npm run preview:sync` | Alias for `build:tma` — run after UI changes so tunnel shows latest |
 | `npm run watch:tma` | Rebuild TMA on file changes (use with Telegram tunnel) |
+| `npm run dev:all` | Backend + Vite (:5173) + `watch:tma` (one command for local dev) |
 | `npm run tunnel` | Cloudflare tunnel → localhost:3847 |
 | `npm run dev:telegram` | Build TMA + start backend for Telegram |
 | `npm run setup:telegram` | Verify tunnel health + set bot menu button |

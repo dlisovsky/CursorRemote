@@ -1,5 +1,17 @@
 # CursorRemote
 
+## Dev preview (localhost + tunnel)
+
+Two URLs, two pipelines — see [.cursor/rules/dev-preview.mdc](.cursor/rules/dev-preview.mdc).
+
+| URL | Pipeline |
+|-----|----------|
+| http://localhost:5173 | `npm run dev:chrome` (Vite HMR) |
+| https://cursorremote.yatrade.org | tunnel → `:3847` → **`tma/dist`** (run `npm run build:tma` or `watch:tma`) |
+
+After TMA/shared changes affecting the UI or API contract: **`npm run preview:sync`**.  
+All-in-one local dev: **`npm run dev:all`** + **`npm run tunnel`** in a second terminal.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.

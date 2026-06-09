@@ -1,0 +1,48 @@
+---
+description: Keep localhost and Cloudflare tunnel previews in sync after every change
+alwaysApply: true
+---
+
+# Dev preview — localhost + tunnel
+
+CursorRemote has **two preview surfaces**. They use different assets; refreshing one does not update the other.
+
+| URL | What serves it | How it gets updates |
+|-----|----------------|---------------------|
+| http://localhost:5173 | Vite dev server (`npm run dev:chrome`) | HMR — save file |
+| https://cursorremote.yatrade.org | Cloudflare tunnel → backend `:3847` → `tma/dist` | `npm run build:tma` or `npm run watch:tma` |
+
+Tunnel config: `.cloudflared/cursorremote.yml` → `http://127.0.0.1:3847` (not Vite).
+
+## Required processes
+
+**Chrome / localhost dev** (terminal 1 + 2, or `npm run dev:all`):
+
+```bash
+MOCK_TG=true npm run dev:server    # :3847, tsx watch — API + WS
+npm run dev:chrome                 # :5173 — Vite HMR
+```
+
+**Telegram / tunnel** (add terminal 3 + 4):
+
+```bash
+npm run watch:tma                    # rebuilds tma/dist on save
+npm run tunnel                       # HTTPS → :3847
+```
+
+Or run everything: `npm run dev:all` (build once, then server + vite + watch).
+
+## After making changes — agent checklist
+
+1. **Backend** (`server/`, `shared/`): `tsx watch` restarts automatically if `dev:server` is running. If not, restart `npm run dev:server`.
+2. **Frontend** (`tma/`): localhost updates via HMR; **tunnel always needs** `npm run build:tma` (or `watch:tma` running).
+3. Before saying "done" or "refresh to see it", run **`npm run preview:sync`** when TMA or shared types changed.
+4. Tell the user which URL(s) to hard-refresh (`Cmd+Shift+R`): `:5173` for Chrome, `cursorremote.yatrade.org` for tunnel/Telegram.
+5. Do **not** assume a browser refresh on localhost updates the tunnel.
+
+## Quick verify
+
+```bash
+curl -s http://localhost:3847/health
+# tunnel (if running): curl -s https://cursorremote.yatrade.org/health
+```

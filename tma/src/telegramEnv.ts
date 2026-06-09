@@ -5,9 +5,14 @@ export function getTelegramInitData(): string {
   return tg?.initData?.trim() ?? "";
 }
 
-/** True when opened inside Telegram with real initData (enables MainButton, safe areas, etc.). */
+/** True when opened inside Telegram with real initData (BackButton, safe areas, etc.). */
 export function isTelegramWebApp(): boolean {
   return getTelegramInitData().length > 0;
+}
+
+/** TG-style layout: real Mini App or Chrome preview via VITE_FORCE_TG_UI. */
+export function isTelegramLayout(): boolean {
+  return isTelegramWebApp() || import.meta.env.VITE_FORCE_TG_UI === "true";
 }
 
 export function mockAuthEnabled(): boolean {
