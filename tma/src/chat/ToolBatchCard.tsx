@@ -19,21 +19,6 @@ function lastLabel(tools: ToolBatchEntry[]): string {
 export function ToolBatchCard({ tools }: { tools: ToolBatchEntry[] }) {
   const [open, setOpen] = useState(false);
   if (tools.length === 0) return null;
-  if (tools.length === 1) {
-    const t = tools[0]!;
-    return (
-      <ToolCallCard
-        item={{
-          kind: "tool",
-          id: "tool-single",
-          runId: "batch",
-          name: t.name,
-          status: t.status,
-          detail: t.detail,
-        }}
-      />
-    );
-  }
 
   const running = tools.some((t) => t.status === "running");
   const color = running ? "blue" : "teal";
@@ -54,7 +39,7 @@ export function ToolBatchCard({ tools }: { tools: ToolBatchEntry[] }) {
             <Stack gap={2} style={{ minWidth: 0 }}>
               <Group gap={6} wrap="nowrap">
                 <Text size="sm" fw={500}>
-                  {tools.length} tool calls
+                  {tools.length} tool call{tools.length === 1 ? "" : "s"}
                 </Text>
                 <Badge size="xs" variant="light" color={color}>
                   {running ? "Running" : "Done"}

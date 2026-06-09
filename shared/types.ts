@@ -101,3 +101,31 @@ export interface SendResponse {
   queued?: boolean;
   queueId?: string;
 }
+
+/** Live projects list row — pushed over /projects/stream. */
+export type ProjectChatRowSnapshot =
+  | {
+      kind: "agent";
+      id: string;
+      title: string;
+      sortAt: string;
+      status: AgentStatus;
+      activity?: string;
+    }
+  | {
+      kind: "ide";
+      id: string;
+      title: string;
+      subtitle: string;
+      sortAt: string;
+      updatedAt: string;
+      canResume: boolean;
+    };
+
+export interface ProjectSnapshot {
+  id: string;
+  name: string;
+  chats: ProjectChatRowSnapshot[];
+}
+
+export type ProjectsWireMessage = { type: "projects_snapshot"; projects: ProjectSnapshot[] };

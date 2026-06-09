@@ -52,6 +52,7 @@ projectsRouter.get("/:projectId/ide-sessions/:sessionId", (req, res) => {
     sessionId,
     title: meta.title,
     subtitle: meta.subtitle,
+    canResume: meta.canResume,
     lines,
     messageCount: lines.length,
   });

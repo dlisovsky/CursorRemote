@@ -2,20 +2,19 @@ import { useEffect, useState } from "react";
 import { Alert, Center, Container, Loader, Stack, Text, Title } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { login } from "./api.js";
-import type { IdeSessionInfo } from "../../shared/types.js";
 import { ProjectsPage } from "./pages/Projects.js";
 import { AgentChatPage } from "./pages/AgentChat.js";
 import { IdeSessionPage } from "./pages/IdeSession.js";
 import { isTelegramWebApp, useTelegramApp } from "./useTelegramApp.js";
+import { useAppRoute } from "./router.js";
 
 export function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [agentId, setAgentId] = useState<string | null>(null);
-  const [ideSession, setIdeSession] = useState<{
-    projectId: string;
-    session: IdeSessionInfo;
-  } | null>(null);
+  const [route, navigate] = useAppRoute();
+  const [ideMeta, setIdeMeta] = useState<{ title: string; subtitle: string; canResume: boolean } | null>(
+    null,
+  );
 
   useTelegramApp();
 
@@ -24,6 +23,13 @@ export function App() {
       .then(() => setReady(true))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+
+  const goProjects = () => navigate({ page: "projects" });
+  const goAgent = (agentId: string) => navigate({ page: "agent", agentId });
+  const goIde = (projectId: string, sessionId: string, meta?: { title: string; subtitle: string; canResume: boolean }) => {
+    if (meta) setIdeMeta(meta);
+    navigate({ page: "ide", projectId, sessionId });
+  };
 
   if (error) {
     return (
@@ -48,25 +54,22 @@ export function App() {
     );
   }
 
-  if (ideSession) {
-    return (
-      <IdeSessionPage
-        projectId={ideSession.projectId}
-        sessionId={ideSession.session.id}
-        title={ideSession.session.title}
-        subtitle={ideSession.session.subtitle}
-        canResume={ideSession.session.canResume}
-        onBack={() => setIdeSession(null)}
-        onResumed={(agentId) => {
-          setIdeSession(null);
-          setAgentId(agentId);
-        }}
-      />
-    );
+  if (route.page === "agent") {
+    return <AgentChatPage agentId={route.agentId} onBack={goProjects} />;
   }
 
-  if (agentId) {
-    return <AgentChatPage agentId={agentId} onBack={() => setAgentId(null)} />;
+  if (route.page === "ide") {
+    return (
+      <IdeSessionPage
+        projectId={route.projectId}
+        sessionId={route.sessionId}
+        title={ideMeta?.title ?? "Cursor IDE chat"}
+        subtitle={ideMeta?.subtitle ?? ""}
+        canResume={ideMeta?.canResume ?? true}
+        onBack={goProjects}
+        onResumed={goAgent}
+      />
+    );
   }
 
   const inTelegram = isTelegramWebApp();
@@ -83,10 +86,7 @@ export function App() {
         <Title order={inTelegram ? 4 : 3} fw={500}>
           {inTelegram ? "Projects" : "Your projects"}
         </Title>
-        <ProjectsPage
-          onOpenAgent={setAgentId}
-          onOpenIdeSession={(projectId, session) => setIdeSession({ projectId, session })}
-        />
+        <ProjectsPage onOpenAgent={goAgent} onOpenIdeSession={goIde} />
       </Stack>
     </Container>
   );

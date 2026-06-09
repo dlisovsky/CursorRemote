@@ -64,6 +64,8 @@ import { chatItemsFromHistory } from "../chat/history.js";
 import { MarkdownText } from "../chat/MarkdownText.js";
 import { agentStatusColor, runStatusLabel } from "../status.js";
 import { connectAgentStream } from "../stream.js";
+import { RefreshIconButton } from "../components/RefreshIconButton.js";
+import { usePullToRefresh } from "../hooks/usePullToRefresh.js";
 import {
   isTelegramLayout,
   isTelegramWebApp,
@@ -127,17 +129,25 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
 
   useTelegramBackButton(inTelegram ? onBack : null);
 
-  const refreshAgent = useCallback(() => {
-    void fetchAgent(agentId)
-      .then((a) => {
-        setAgent(a);
-        if (a.activeRunId) {
-          setRunId(a.activeRunId);
-          setStatus("running");
-        }
-      })
-      .catch(() => setAgent(null));
+  const refreshAll = useCallback(async () => {
+    try {
+      const a = await fetchAgent(agentId);
+      setAgent(a);
+      if (a.activeRunId) {
+        setRunId(a.activeRunId);
+        setStatus("running");
+      }
+      const { events } = await fetchAgentHistory(agentId);
+      const historical = chatItemsFromHistory(events, (fileId) => attachmentUrl(agentId, fileId));
+      if (historical.length > 0) setItems(historical);
+    } catch {
+      setAgent(null);
+    }
   }, [agentId]);
+
+  const refreshAgent = useCallback(() => {
+    void refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
     refreshAgent();
@@ -158,6 +168,8 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       if (historical.length > 0) setItems(historical);
     });
   }, [agentId]);
+
+  const { pullDistance } = usePullToRefresh(refreshAll, inTelegram || tgLayout, viewportRef);
 
   const handleWireEvent = useCallback((event: WireMessage) => {
     if (event.type === "user_message") {
@@ -609,15 +621,34 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
               )}
             </div>
           </Group>
-          <StatusBadge
-            status={isRunning ? "running" : (agent?.status ?? status)}
-            size={tgLayout ? "md" : "sm"}
-          />
+          <Group gap={6} wrap="nowrap">
+            {isRunning && (
+              <ActionIcon
+                size={tgLayout ? 36 : 32}
+                variant="light"
+                color="red"
+                aria-label="Stop generating"
+                onClick={() => void onStop()}
+              >
+                <IconPlayerStop size={18} />
+              </ActionIcon>
+            )}
+            {isRunning && <StatusBadge status="running" size={tgLayout ? "md" : "sm"} />}
+            {(agent?.status === "error" || agent?.status === "stale") && (
+              <StatusBadge status={agent.status} size={tgLayout ? "md" : "sm"} />
+            )}
+            <RefreshIconButton onRefresh={() => void refreshAll()} />
+          </Group>
         </Group>
       </AppShell.Header>
 
       <AppShell.Main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {!tgLayout && <ActivityStrip label={activityLabel} />}
+        {pullDistance > 0 && (
+          <Text size="xs" c="dimmed" ta="center" py={4}>
+            {pullDistance >= 72 ? "Release to refresh" : "Pull to refresh"}
+          </Text>
+        )}
         <ScrollArea
           style={{ flex: 1, minHeight: 0 }}
           type="auto"
@@ -664,19 +695,6 @@ export function AgentChatPage({ agentId, onBack }: { agentId: string; onBack: ()
       <AppShell.Footer px={tgLayout ? "sm" : "md"} pt={tgLayout ? "sm" : "xs"} withBorder>
         <Stack gap="sm" pb={tgLayout ? "xs" : 0}>
           {tgLayout && activityLabel && <ActivityStrip label={activityLabel} compact />}
-          {isRunning && (
-            <Button
-              fullWidth
-              color="red"
-              variant="filled"
-              size="md"
-              leftSection={<IconPlayerStop size={18} />}
-              onClick={() => void onStop()}
-              styles={{ root: { minHeight: 44 } }}
-            >
-              Stop generating
-            </Button>
-          )}
           {(recording || transcribing) && (
             <Text size="xs" c={recording ? "red" : "dimmed"} ta="center">
               {transcribing

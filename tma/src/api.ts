@@ -45,6 +45,7 @@ export function fetchIdeSession(
   sessionId: string;
   title: string;
   subtitle: string;
+  canResume: boolean;
   lines: IdeTranscriptLine[];
   messageCount: number;
 }> {

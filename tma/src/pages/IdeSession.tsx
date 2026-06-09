@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   AppShell,
-  Badge,
+  Box,
   Button,
   Group,
   Paper,
@@ -11,19 +11,21 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { IconArrowLeft, IconMessageChatbot, IconPlayerPlay } from "@tabler/icons-react";
+import { IconArrowLeft, IconPlayerPlay } from "@tabler/icons-react";
 import type { IdeTranscriptLine } from "../../../shared/types.js";
 import { fetchIdeSession, resumeIdeSession } from "../api.js";
 import { MarkdownText } from "../chat/MarkdownText.js";
 import { ToolBatchCard } from "../chat/ToolBatchCard.js";
-import { isTelegramLayout, useTelegramBackButton } from "../useTelegramApp.js";
+import { RefreshIconButton } from "../components/RefreshIconButton.js";
+import { usePullToRefresh } from "../hooks/usePullToRefresh.js";
+import { isTelegramLayout, isTelegramWebApp, useTelegramBackButton } from "../useTelegramApp.js";
 
 export function IdeSessionPage({
   projectId,
   sessionId,
   title: initialTitle,
   subtitle: initialSubtitle,
-  canResume,
+  canResume: initialCanResume,
   onBack,
   onResumed,
 }: {
@@ -36,8 +38,10 @@ export function IdeSessionPage({
   onResumed: (agentId: string) => void;
 }) {
   const tgLayout = isTelegramLayout();
+  const inTelegram = isTelegramWebApp();
   const [title, setTitle] = useState(initialTitle);
   const [subtitle, setSubtitle] = useState(initialSubtitle);
+  const [canResume, setCanResume] = useState(initialCanResume);
   const [lines, setLines] = useState<IdeTranscriptLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
@@ -46,17 +50,27 @@ export function IdeSessionPage({
 
   useTelegramBackButton(onBack);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     setLoading(true);
-    fetchIdeSession(projectId, sessionId)
-      .then((data) => {
-        setTitle(data.title);
-        setSubtitle(data.subtitle);
-        setLines(data.lines);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
+    setError(null);
+    try {
+      const data = await fetchIdeSession(projectId, sessionId);
+      setTitle(data.title);
+      setSubtitle(data.subtitle);
+      setCanResume(data.canResume);
+      setLines(data.lines);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, [projectId, sessionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const { pullDistance } = usePullToRefresh(load, inTelegram || tgLayout, viewportRef);
 
   useEffect(() => {
     if (loading || lines.length === 0) return;
@@ -80,7 +94,21 @@ export function IdeSessionPage({
   }
 
   return (
-    <AppShell header={{ height: tgLayout ? 52 : 56 }} padding={0}>
+    <AppShell
+      header={{ height: tgLayout ? 52 : 56 }}
+      footer={{ height: "auto" }}
+      padding={0}
+      styles={{
+        root: { height: "100dvh", overflow: "hidden" },
+        main: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
+        footer: {
+          paddingBottom: tgLayout
+            ? "calc(var(--mantine-spacing-md) + max(env(safe-area-inset-bottom, 0px), var(--tg-safe-bottom), 16px))"
+            : undefined,
+          borderTop: "1px solid var(--mantine-color-default-border)",
+        },
+      }}
+    >
       <AppShell.Header
         px="md"
         style={{
@@ -98,33 +126,22 @@ export function IdeSessionPage({
             <Title order={5} lineClamp={1}>
               {title}
             </Title>
-            <Text size="xs" c="dimmed" lineClamp={1}>
-              {subtitle || (canResume ? "Cursor IDE · view or resume" : "Cursor IDE · view only")}
-            </Text>
+            {subtitle && (
+              <Text size="xs" c="dimmed" lineClamp={1}>
+                {subtitle}
+              </Text>
+            )}
           </Stack>
-          {canResume ? (
-            <Button
-              size="compact-sm"
-              variant="light"
-              color="teal"
-              leftSection={<IconPlayerPlay size={14} />}
-              loading={resuming}
-              onClick={() => void onResume()}
-            >
-              Resume
-            </Button>
-          ) : (
-            <Badge variant="light" color="violet" leftSection={<IconMessageChatbot size={12} />}>
-              IDE
-            </Badge>
-          )}
+          <RefreshIconButton onRefresh={() => void load()} loading={loading} />
         </Group>
       </AppShell.Header>
 
-      <AppShell.Main
-        pb={tgLayout ? "var(--tg-safe-bottom)" : "md"}
-        style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
-      >
+      <AppShell.Main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {pullDistance > 0 && (
+          <Text size="xs" c="dimmed" ta="center" py={4}>
+            {pullDistance >= 72 ? "Release to refresh" : "Pull to refresh"}
+          </Text>
+        )}
         <ScrollArea style={{ flex: 1 }} px="md" py="sm" type="auto" viewportRef={viewportRef}>
           {loading && (
             <Text c="dimmed" size="sm">
@@ -148,6 +165,27 @@ export function IdeSessionPage({
           </Stack>
         </ScrollArea>
       </AppShell.Main>
+
+      <AppShell.Footer px="md" py="sm">
+        {canResume ? (
+          <Button
+            fullWidth
+            size="md"
+            variant="light"
+            color="teal"
+            leftSection={<IconPlayerPlay size={16} />}
+            loading={resuming}
+            onClick={() => void onResume()}
+            styles={{ root: { minHeight: 44 } }}
+          >
+            Resume — chat from phone
+          </Button>
+        ) : (
+          <Text size="sm" c="dimmed" ta="center">
+            View only — this Cursor chat has no SDK agent ID. Continue in Cursor IDE.
+          </Text>
+        )}
+      </AppShell.Footer>
     </AppShell>
   );
 }

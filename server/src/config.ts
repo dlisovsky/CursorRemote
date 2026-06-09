@@ -16,7 +16,7 @@ function required(name: string): string {
 }
 
 export const config = {
-  port: Number(process.env.PORT ?? 3847),
+  port: Number(process.env.PORT ?? 4871),
   cursorApiKey: () => required("CURSOR_API_KEY"),
   telegramBotToken: () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "",
   mockTelegram: process.env.MOCK_TG === "true",

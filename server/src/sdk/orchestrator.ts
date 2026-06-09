@@ -8,6 +8,8 @@ import type { QueueItem, UserAttachmentMeta } from "../../../shared/types.js";
 import { buildPromptWithAttachments } from "../media/prompt.js";
 import { saveAttachments, type IncomingAttachment } from "../media/attachments.js";
 import * as bridge from "./stream-bridge.js";
+import { setAgentActivity } from "../agent-activity.js";
+import * as projectsStream from "../projects-stream-bridge.js";
 
 const handles = new Map<string, SDKAgent>();
 const activeRuns = new Map<string, Run>();
@@ -32,8 +34,10 @@ export async function startupReconcile(): Promise<void> {
       });
       handles.set(agent.id, sdk);
       store.updateAgentStatus(agent.id, "idle");
+      projectsStream.notifyAgent(agent.id);
     } catch {
       store.updateAgentStatus(agent.id, "stale");
+      projectsStream.notifyAgent(agent.id);
     }
   }
 }
@@ -48,6 +52,7 @@ export async function importAgentFromCursor(input: {
   const existing = store.findAgentByCursorAgentId(input.telegramUserId, input.cursorAgentId);
   if (existing) {
     await getOrResumeHandle(existing.id);
+    projectsStream.notifyUser(input.telegramUserId);
     return existing;
   }
 
@@ -68,6 +73,7 @@ export async function importAgentFromCursor(input: {
       cursorAgentId: input.cursorAgentId,
     });
     handles.set(id, sdk);
+    projectsStream.notifyUser(input.telegramUserId);
     return row;
   } catch (err) {
     const message = err instanceof CursorAgentError ? err.message : String(err);
@@ -98,6 +104,7 @@ export async function createAgent(input: {
       cursorAgentId: sdk.agentId,
     });
     handles.set(id, sdk);
+    projectsStream.notifyUser(input.telegramUserId);
     return row;
   } catch (err) {
     const message = err instanceof CursorAgentError ? err.message : String(err);
@@ -131,9 +138,24 @@ function publishQueue(agentId: string): void {
   });
 }
 
+function applyActivityFromWire(agentId: string, wire: ReturnType<typeof normalizeSdkMessage>[number]): void {
+  if (wire.type === "tool_call" && wire.status === "running") {
+    setAgentActivity(agentId, `Using ${wire.name}…`);
+  } else if (wire.type === "thinking" && wire.duration == null) {
+    setAgentActivity(agentId, "Thinking…");
+  } else if (wire.type === "assistant_delta") {
+    setAgentActivity(agentId, "Writing response…");
+  } else if (wire.type === "run_status" && wire.status !== "running") {
+    setAgentActivity(agentId, null);
+  }
+  projectsStream.notifyAgent(agentId);
+}
+
 async function consumeRun(agentId: string, run: Run): Promise<void> {
   activeRuns.set(agentId, run);
   store.updateAgentStatus(agentId, "running");
+  setAgentActivity(agentId, "Working…");
+  projectsStream.notifyAgent(agentId);
 
   let assistantText = "";
 
@@ -141,6 +163,7 @@ async function consumeRun(agentId: string, run: Run): Promise<void> {
     for await (const event of run.stream()) {
       for (const wire of normalizeSdkMessage(run.id, event)) {
         if (wire.type === "assistant_delta") assistantText += wire.text;
+        applyActivityFromWire(agentId, wire);
         bridge.fanOut(agentId, run.id, wire);
       }
     }
@@ -162,7 +185,9 @@ async function consumeRun(agentId: string, run: Run): Promise<void> {
     store.finishRun(run.id, "error");
   } finally {
     activeRuns.delete(agentId);
+    setAgentActivity(agentId, null);
     store.updateAgentStatus(agentId, "idle");
+    projectsStream.notifyAgent(agentId);
     void drainQueue(agentId);
   }
 }

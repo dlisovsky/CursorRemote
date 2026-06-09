@@ -12,6 +12,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { agentsRouter } from "./routes/agents.js";
 import * as orchestrator from "./sdk/orchestrator.js";
 import * as bridge from "./sdk/stream-bridge.js";
+import * as projectsStream from "./projects-stream-bridge.js";
 
 initRegistry();
 await orchestrator.startupReconcile();
@@ -46,15 +47,24 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-  if (!url.pathname.startsWith("/agents/") || !url.pathname.endsWith("/stream")) {
-    socket.destroy();
-    return;
-  }
-
   const token = url.searchParams.get("token");
   const user = token ? verifyJwt(token) : null;
   if (!user) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  if (url.pathname === "/projects/stream") {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      projectsStream.subscribe(user.telegramUserId, ws);
+      projectsStream.sendSnapshot(ws, user.telegramUserId);
+      wss.emit("connection", ws, req);
+    });
+    return;
+  }
+
+  if (!url.pathname.startsWith("/agents/") || !url.pathname.endsWith("/stream")) {
     socket.destroy();
     return;
   }

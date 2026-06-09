@@ -18,7 +18,7 @@ test("mock auth → projects → agent chat", async ({ page }) => {
   await prompt.fill("Count slowly from 1 to 20, one number per line.");
   await page.getByLabel("Send").click();
 
-  const stopBtn = page.getByText("Stop generating");
+  const stopBtn = page.getByLabel("Stop generating");
   await expect(stopBtn).toBeVisible({ timeout: 30_000 });
   await stopBtn.click();
   await expect(stopBtn).toBeHidden({ timeout: 30_000 });

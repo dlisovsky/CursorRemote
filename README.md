@@ -17,11 +17,11 @@ cp .env.example .env
 # Set CURSOR_API_KEY and PROJECT_PATHS (MOCK_TG=true and VITE_MOCK_TG=true by default)
 
 npm install
-npm run dev:server   # terminal 1 — backend (:3847), accepts mock + real TG auth
-npm run dev:tma      # terminal 2 — Vite dev server (:5173)
+npm run dev:server   # terminal 1 — backend (:4871), accepts mock + real TG auth
+npm run dev:tma      # terminal 2 — Vite dev server (:5187)
 ```
 
-**Chrome:** open http://localhost:5173 — uses mock initData automatically.
+**Chrome:** open http://localhost:5187 — uses mock initData automatically.
 
 **Telegram Mini App:** `npm run dev:telegram` + `npm run tunnel`, open via your bot — uses real initData; native MainButton/back UI activates automatically.
 
@@ -38,21 +38,21 @@ Both work at the same time when `MOCK_TG=true` (backend accepts mock and validat
 | `VITE_MOCK_TG` | `true` (default dev) — Chrome falls back to mock; Mini App uses real initData when present |
 | `TELEGRAM_BOT_TOKEN` | Bot token for real initData HMAC |
 | `JWT_SECRET` | JWT signing secret |
-| `PORT` | Backend port (default `3847`) |
+| `PORT` | Backend port (default `4871`) |
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
 | `npm run dev:server` | Backend API + WebSocket |
-| `npm run dev:tma` | Vite dev server for TMA (Chrome dev at :5173) |
+| `npm run dev:tma` | Vite dev server for TMA (Chrome dev at :5187) |
 | `npm run dev:chrome:server` | Alias: backend with `MOCK_TG=true` forced |
 | `npm run dev:chrome` | Alias: Vite with `VITE_MOCK_TG=true` forced |
 | `npm run build:tma` | Production TMA build (served by backend) |
 | `npm run preview:sync` | Alias for `build:tma` — run after UI changes so tunnel shows latest |
 | `npm run watch:tma` | Rebuild TMA on file changes (use with Telegram tunnel) |
-| `npm run dev:all` | Backend + Vite (:5173) + `watch:tma` (one command for local dev) |
-| `npm run tunnel` | Cloudflare tunnel → localhost:3847 |
+| `npm run dev:all` | Backend + Vite (:5187) + `watch:tma` (one command for local dev) |
+| `npm run tunnel` | Cloudflare tunnel → localhost:4871 |
 | `npm run dev:telegram` | Build TMA + start backend for Telegram |
 | `npm run setup:telegram` | Verify tunnel health + set bot menu button |
 | `npm run sdk:smoke` | Verify Cursor SDK connectivity |
@@ -72,8 +72,8 @@ Both work at the same time when `MOCK_TG=true` (backend accepts mock and validat
    Config lives in `.cloudflared/cursorremote.yml`. Set `PUBLIC_URL` in `.env` to match the hostname.
 4. Run backend + tunnel:
    ```bash
-   npm run dev:telegram   # builds TMA + starts API on :3847
-   npm run tunnel         # HTTPS → localhost:3847
+   npm run dev:telegram   # builds TMA + starts API on :4871
+   npm run tunnel         # HTTPS → localhost:4871
    npm run setup:telegram # verify health + set menu button
    ```
 5. In BotFather → /myapps → Web App URL = `PUBLIC_URL` (e.g. `https://cursorremote.yatrade.org`)
